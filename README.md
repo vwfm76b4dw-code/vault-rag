@@ -1,0 +1,127 @@
+# vault-rag — 本地优先的个人知识库 RAG 系统
+
+把几千篇 Markdown 笔记（Obsidian Vault）变成可语义检索、可感知文档时效、可追溯版本演化的本地知识库。**纯本地推理，零云端依赖**；所有产物存放在你自己的目录，笔记原文只读不写。
+
+## 为什么存在
+
+通用 RAG 教程不会告诉你这些坑，它们都来自真实生产事故：
+
+- **embedding 服务端崩溃**（`0xc0000409` 栈溢出）：llama.cpp CPU 后端对某些模型在 AVX512 关闭时不稳定；解法是用 transformers 直连模型
+- **npy 向量文件三连坑**：Windows 上自动补后缀、mmap 句柄占用无法替换、全量重写覆盖失败 → 最终改为 **SQLite BLOB 存储 + 显式主键**
+- **AUTOINCREMENT 主键的隐性错位**：任何一次删行之后，新向量与文本永久错序 → 改为显式主键绑定
+- **文本与向量失配风险**：每批独立提交 + 启动时语义自愈（孤儿向量删、缺向量笔记回滚）
+- **全库重建是个伪概念**：`hash(模型+文本)` 做 KV 缓存，任何事故后从缓存秒级自愈，增量编码零模型调用
+
+## 架构
+
+```
+include.txt (声明式范围, .gitignore 语法)
+    ↓
+scope.py ── 任意目录 × 任意文件类型 → 待索引清单
+    ↓
+indexer_qwen.py ── 切块(chunker.py) → Qwen3-Embedding-0.6B
+    ↓                ├─ embed_cache: KV 缓存（秒级自愈）
+    ↓                └─ blob_vectors: 显式主键向量表
+SQLite (qwen_rag.db)
+    ↓
+search.py / rag-obsidian MCP ── 语义检索 + 时效降权
+    ↓
+freshness.py + relations.py ── 时效裁决 + 四边知识关系图
+    ↓
+project_tree.py ── 项目知识树（mermaid 谱系图）
+```
+
+## 核心能力
+
+### 1. 语义检索（中文强）
+Qwen3-Embedding-0.6B CPU float32，官方 last-token pooling + L2 归一化 + 查询侧 instruction 前缀。3 万+ 笔记毫秒级暴力点积扫描。
+
+### 2. 文件时效性引擎（五级信号）
+mtime 不可信（批量触碰即失效），改用内容内嵌信号：
+- S1 显式声明（frontmatter `superseded_by` / 「历史版本」标记）
+- S2 数据量断层（同簇体积 ≥5x → 小者判残骸）
+- S3 嵌入时间（文件名日期 > frontmatter > 正文三级优先）
+- S4 git 基线（真实编辑史）
+- S5 向量近重复（≥0.92 → 合并候选）
+
+自动区分三种簇类型：**时序流**（早报/周报，全保留）/ **版本簇**（裁决权威+沉底残骸）/ **待人工**。
+
+### 3. 知识关系图（四种边）
+- `references` — wikilink 直通
+- `supersedes` — 时效裁决（★权威 → ▽残骸）
+- `sibling_next` — 时序流按日期成链
+- `complements` — 跨簇向量互补
+
+### 4. 权重机制（引用数基础 + 项目继承 + AI 评价）
+```
+computed = min(100, base + inherit + ai_bonus)
+base     = min(in_degree × 4, 25)        # wikilink + 关系图双通道
+inherit  = 项目重要度 × 0.5               # 仅根级散落文件
+ai_bonus = 四维均分 × 0.5                 # structure/density/timeliness/uniqueness
+```
+AI 评价经 `claude -p` 无头调用，支持定期迭代（计划任务 + git 版本化）。
+
+### 5. 多模态摄取（设计完成）
+- **图像**：纹理复杂度路由（本地嵌入简单图 / 云端描述复杂图）+ 三版本原则（向量/描述/原图）
+- **PDF**：pypdfium2 字符坐标聚类重建版面，双栏阅读顺序还原
+- **PPTX**：zipfile+XML 零依赖抽取文本与内嵌图归属
+- **数字流等非语言内容**：DataBlob 通道（元数据卡入库，不产生垃圾向量）
+
+## 快速开始
+
+```bash
+# 1. 配置范围（编辑 include.txt）
+知识/
+项目/
+@/path/to/your/CLAUDE.md as external/AI工程哲学-ClaudeMd.md
+
+# 2. 首次索引（需 LM Studio 或本地 transformers）
+python run_index.py
+
+# 3. 检索
+python search.py "agent 怎么防遗忘"
+
+# 4. 生成项目知识树
+python project_tree.py all
+```
+
+### 依赖
+- Python 3.10+, numpy, requests
+- transformers + torch（CPU 版即可）
+- Qwen3-Embedding-0.6B（经 HuggingFace 下载）
+- （可选）LM Studio 1234 端口 / Obsidian MCP
+
+## MCP 集成：rag-obsidian
+
+可与现有 Obsidian FTS 服务器深度融合为 32 工具统一服务：
+
+- `semantic_search` — 语义检索 + 时效降权内建
+- `get_note_relations` — 一篇笔记的出/入关系图
+- `note_freshness` — 单篇时效诊断
+- （原 29 工具全部保留：FTS / 正则 / 模糊 / 拓扑 / 权重 / 维护）
+
+设计要点：**MCP 服务器进程零重依赖**——embedding 走 HTTP 外置，失败自动降级关键词检索。
+
+## 定时任务
+
+- `Stop hook`：Claude Code 会话结束时自动增量索引（`git_diff_scope.py` 变更检测 → 只编真变的文件）
+- `每周日 03:00`：权重定期迭代（`weight_iterate.bat`，自动提交 git 版本）
+
+## 踩坑清单（完整记录在仓库内）
+
+1. bf16/fp8 视觉塔数值下溢 → AWQ-4bit 才是图像可用态
+2. transformers 加载第三方量化需 `compressed-tensors>=0.15`
+3. Windows 下 subprocess cwd 必须是已存在目录
+4. LM Studio 下载走 `hf-mirror.com` + 自愈续传循环（应对 10054 断连）
+5. chat_template 缺失需从 base instruct 模型注入
+6. ……（详见 `data/_mm_findings.md` 等内部记录）
+
+## License
+
+MIT — 见 [LICENSE](LICENSE)
+
+## 致谢与灵感
+
+- [Qwen3-Embedding](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) / [Qwen3-VL-Embedding](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B)
+- [ColPali](https://github.com/illuin-tech/colpali)（多向量晚交互检索的思想来源）
+- [Docling](https://github.com/docling-project/docling) / [unstructured](https://github.com/Unstructured-IO/unstructured)（文档解析对标）
