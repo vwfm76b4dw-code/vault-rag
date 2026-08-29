@@ -4,7 +4,7 @@
 替代"全库 mtime 扫描"的粗活：与上次索引基线 commit 做 git diff，
 只把真正变过的文件送进索引队列（含软链接外部源）。
 
-工作流：
+工作流（全新环境直接跑 changed 即可，基线仓库自动建立）：
     python git_diff_scope.py changed     # 列出相对基线的变更/新增文件
     python git_diff_scope.py mark        # 索引完成后打新基线 tag(rag-baseline-N)
     python git_diff_scope.py status      # 显示当前基线与落后状态
@@ -18,11 +18,14 @@ import scope as scopes
 from config import VAULT
 
 BASE_TAG = "rag-baseline"
+REPO = Path(__file__).parent / ".ragfiles"
 
 
-def _git(*args):
-    return subprocess.run(["git", *args], capture_output=True, text=True,
-                          cwd=str(Path(__file__).parent)).stdout
+def _git_in(repo, *args) -> str:
+    if not Path(repo).exists():
+        return ""
+    r = subprocess.run(["git", *args], cwd=str(repo), capture_output=True)
+    return r.stdout.decode("utf-8", "replace")
 
 
 def snapshot_files():
@@ -37,27 +40,15 @@ def snapshot_files():
     return out
 
 
-def ensure_tracking_repo():
-    """首次运行：无历史基线时建立 rag-files 快照分支并全量提交。"""
-    repo = Path(__file__).parent / ".ragfiles"
-    repo.mkdir(exist_ok=True)            # 先保证目录存在（Windows cwd 需真实目录）
+def _init_and_commit(repo: Path) -> int:
+    """建立快照仓库（若未初始化）并提交全量 manifest，打下一个基线 tag。"""
+    repo.mkdir(parents=True, exist_ok=True)
     if not (repo / ".git").exists():
-        return False                     # 尚未初始化，交给下方建库
-    r = subprocess.run(["git", "tag", "-l", BASE_TAG + "*"], cwd=str(repo),
-                       capture_output=True)
-    if r.returncode == 0 and r.stdout.decode("utf-8", "replace").split():
-        return False
-    repo = Path(__file__).parent / ".ragfiles"
-    repo.mkdir(exist_ok=True)
-    _init_and_commit(repo)
-    print("[init] 已建立文件快照仓库 .ragfiles/ 并打首个基线")
-    return True
+        subprocess.run(["git", "init", "-q"], cwd=str(repo), capture_output=True)
 
-
-def _init_and_commit(repo: Path):
     def run(*a):
         subprocess.run(["git", *a], cwd=str(repo), capture_output=True, text=True)
-    run("init", "-q")
+
     snap = snapshot_files()
     manifest = "\n".join(f"{k}\t{v[1]:.3f}" for k, v in sorted(snap.items()))
     (repo / "manifest.tsv").write_text(manifest, encoding="utf-8")
@@ -66,25 +57,30 @@ def _init_and_commit(repo: Path):
     subprocess.run(["git", "-c", "user.name=rag", "-c", "user.email=rag@local",
                     "commit", "-q", "-m", f"baseline: {n} files"],
                    cwd=str(repo), capture_output=True)
-    # 打 tag
     idx = len(_git_in(repo, "tag", "-l", BASE_TAG + "*").split())
     subprocess.run(["git", "tag", f"{BASE_TAG}-{idx+1}"], cwd=str(repo), capture_output=True)
     return idx + 1
 
 
-def _git_in(repo, *args):
-    if not Path(repo).exists():
-        return ""
-    r = subprocess.run(["git", *args], cwd=str(repo), capture_output=True)
-    return r.stdout.decode("utf-8", "replace")
+def ensure_tracking_repo() -> bool:
+    """确保 .ragfiles 快照仓库存在且有基线 tag。新建/补建返回 True。"""
+    repo = REPO
+    repo.mkdir(parents=True, exist_ok=True)   # Windows cwd 需真实目录
+    has_tags = bool(_git_in(repo, "tag", "-l", BASE_TAG + "*").split())
+    if (repo / ".git").exists() and has_tags:
+        return False
+    _init_and_commit(repo)
+    print("[init] 已建立文件快照仓库 .ragfiles/ 并打首个基线")
+    return True
 
 
-REPO = Path(__file__).parent / ".ragfiles"
+def latest_baseline() -> str:
+    return _git_in(REPO, "describe", "--tags", "--abbrev=0").strip()
 
 
-def changed_files() -> list[tuple[str, Path]]:
-    """对比最近基线 manifest 与当前文件系统，返回 (key, path) 变更清单。"""
-    base_tag_name = _git_in(REPO, "describe", "--tags", "--abbrev=0").strip()
+def changed_files() -> tuple[list[tuple[str, Path]], list[str]]:
+    """对比最近基线 manifest 与当前文件系统，返回 (变更清单, 删除清单)。"""
+    base_tag_name = latest_baseline()
     if not base_tag_name:
         raise RuntimeError("无基线，先跑 mark")
     old = {}

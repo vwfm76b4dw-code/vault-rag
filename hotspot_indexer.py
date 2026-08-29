@@ -17,17 +17,17 @@ import sqlite3
 import sys
 import time
 import os
-import os
-import os
 from pathlib import Path
 
 import numpy as np
 import requests
 
-VAULT = Path(os.environ.get("VAULT_PATH", str(Path.home() / "Documents" / "Obsidian Vault")))
-NOMIC_DB = Path(r"D:\AI Coding\vault-rag\data\rag.db")
-NOMIC_VEC = Path(r"D:\AI Coding\vault-rag\data\vectors.npy")
-OUT_DIR = Path(r"D:\AI Coding\vault-rag\data\qwen")
+sys.path.insert(0, str(Path(__file__).parent))
+from config import VAULT, DATA_DIR, LEGACY_DB_PATH, LEGACY_VEC_PATH
+
+NOMIC_DB = LEGACY_DB_PATH
+NOMIC_VEC = LEGACY_VEC_PATH
+OUT_DIR = DATA_DIR / "qwen"
 OUT_DB = OUT_DIR / "rag.db"
 OUT_VEC = OUT_DIR / "vectors.npy"
 API_URL = "http://127.0.0.1:1234/v1/embeddings"
@@ -35,10 +35,11 @@ MODEL = "text-embedding-qwen3-embedding-8b"
 DIM = 4096
 SKIP_DIRS = {".obsidian", ".trash", ".git", "__pycache__", ".codex"}
 REQUEST_TIMEOUT = (120, 120)   # Qwen3 慢，给足余量
+MAX_ATTEMPTS = 4
 
 
 def http_embed(texts: list[str]) -> list[list[float]]:
-    for attempt in range(1, 4):
+    for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             r = requests.post(API_URL, json={"model": MODEL, "input": texts},
                               timeout=REQUEST_TIMEOUT)
@@ -46,10 +47,11 @@ def http_embed(texts: list[str]) -> list[list[float]]:
                 return [d["embedding"] for d in r.json()["data"]]
             raise RuntimeError(f"HTTP {r.status_code}")
         except Exception as e:
-            if attempt == 4:
+            if attempt == MAX_ATTEMPTS:
                 print(f"  ! embed 失败: {e}", file=sys.stderr)
                 return []
             time.sleep(5 * attempt)
+    return []
 
 
 def init_out_db():
@@ -165,17 +167,26 @@ def search(query: str, top_k: int = 5) -> list[dict]:
     if not OUT_VEC.exists():
         return []
     probe = http_embed([query])
+    if not probe:
+        return []
     qv = np.asarray(probe[0], dtype=np.float32)
     qv /= np.linalg.norm(qv)
     vecs = np.load(OUT_VEC, mmap_mode="r")
-    vecs /= np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
+    vecs = vecs / np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
     sims = vecs @ qv
     order = np.argsort(-sims)[:top_k]
     con = sqlite3.connect(OUT_DB)
-    rows = con.execute("SELECT rel_path, text FROM chunks WHERE chunk_id IN ({})".format(
-        ",".join(str(int(i)) for i in order))).fetchall()
-    return [{"score": float(sims[int(i)]), "rel_path": r[0], "text": r[1][:150]}
-            for i, r in zip(order, rows)]
+    by_id = {r[0]: r for r in con.execute(
+        "SELECT chunk_id, rel_path, text FROM chunks WHERE chunk_id IN ({})".format(
+            ",".join(str(int(i)) for i in order)))}
+    con.close()
+    # IN 查询不保证返回顺序，按 order 重建配对，避免分数与文本错位
+    out = []
+    for i in order:
+        r = by_id.get(int(i))
+        if r is not None:
+            out.append({"score": float(sims[int(i)]), "rel_path": r[1], "text": r[2][:150]})
+    return out
 
 
 def fmt(results):

@@ -85,11 +85,33 @@ python search.py "agent 怎么防遗忘"
 python project_tree.py all
 ```
 
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `VAULT_PATH` | `~/Documents/Obsidian Vault` | Obsidian Vault 根目录 |
+| `RAG_DATA_DIR` | `<仓库>/data` | 索引产物目录 |
+| `RAG_FTS_DB` | `~/.claude/mcp_servers/obsidian-search/vault_new.db` | 外部 wikilink 图来源（可选） |
+| `RAG_VEC_CACHE_MB` | `2048` | 检索向量缓存上限（MB，0=禁用） |
+| `HF_ENDPOINT` | 不设置 | 代码内用 setdefault，不会覆盖你已设的镜像 |
+
 ### 依赖
-- Python 3.10+, numpy, requests
-- transformers + torch（CPU 版即可）
-- Qwen3-Embedding-0.6B（经 HuggingFace 下载）
+
+```bash
+pip install -r requirements.txt   # torch 建议装 CPU 版即可
+```
+
+- Python 3.10+，numpy，requests
+- transformers + torch（CPU 版即可），Qwen3-Embedding-0.6B（首次运行自动经 HF 下载）
 - （可选）LM Studio 1234 端口 / Obsidian MCP
+
+### 测试
+
+测试套件零模型依赖（纯逻辑 + SQLite 临时库），CI 在 Ubuntu/Windows × Python 3.10/3.13 上跑：
+
+```bash
+python -m unittest discover -s tests -v
+```
 
 ## MCP 集成：rag-obsidian
 
@@ -104,7 +126,7 @@ python project_tree.py all
 
 ## 定时任务
 
-- `Stop hook`：Claude Code 会话结束时自动增量索引（`git_diff_scope.py` 变更检测 → 只编真变的文件）
+- `Stop hook`：Claude Code 会话结束时自动增量索引（`git_diff_scope.py` 变更检测 → 只编真变的文件）。原子锁防并发索引器；索引进程失败时信号自动归零，变更不会被永久标记为已索引
 - `每周日 03:00`：权重定期迭代（`weight_iterate.bat`，自动提交 git 版本）
 
 ## 踩坑清单（完整记录在仓库内）
@@ -114,7 +136,7 @@ python project_tree.py all
 3. Windows 下 subprocess cwd 必须是已存在目录
 4. LM Studio 下载走 `hf-mirror.com` + 自愈续传循环（应对 10054 断连）
 5. chat_template 缺失需从 base instruct 模型注入
-6. ……（详见 `data/_mm_findings.md` 等内部记录）
+6. `fnmatch` 的 `*` 实际会跨目录（与 shell glob 语义相反）——include.txt 的 `*.md` 因此只匹配根级文件，跨目录请用 `**`
 
 ## License
 

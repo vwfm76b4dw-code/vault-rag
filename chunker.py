@@ -24,8 +24,11 @@ def _split_long(text: str) -> list[str]:
             break
     return [p for p in (x.strip() for x in out) if p]
 
-def chunk_markdown(text: str) -> list[str]:
-    """两级策略：先按标题行分段（携带父级标题路径做上下文前缀），长段再滑窗。"""
+def chunk_markdown(text: str) -> list[tuple[str, str]]:
+    """两级策略：先按标题行分段（携带父级标题路径做上下文前缀），长段再滑窗。
+
+    返回 [(标题路径, 块文本), ...]——section 与正文分离，不再靠解析前缀还原。
+    """
     lines = text.splitlines()
     sections: list[tuple[str, list[str]]] = []   # (标题路径, 行列表)
     cur_path, cur_lines = "", []
@@ -43,15 +46,14 @@ def chunk_markdown(text: str) -> list[str]:
     if cur_lines:
         sections.append((cur_path, cur_lines))
 
-    chunks: list[str] = []
+    out: list[tuple[str, str]] = []
     for path, lns in sections:
         body = "\n".join(lns).strip()
         if not body:
             continue
-        prefix = f"[{path}]\n" if path else ""
         for piece in _split_long(body):
-            chunks.append((prefix + piece)[:MAX_CHARS + len(prefix)])
-    return chunks
+            out.append((path, piece))
+    return out
 
 def chunk_note(rel_path: str, raw: str) -> list[dict]:
     """整篇笔记的块列表。frontmatter 单独成块（元数据检索用）。"""
@@ -64,6 +66,7 @@ def chunk_note(rel_path: str, raw: str) -> list[dict]:
     out = []
     if fm:
         out.append({"text": "[frontmatter]\n" + fm[:MAX_CHARS], "section": "frontmatter"})
-    for c in chunk_markdown(body):
-        out.append({"text": c, "section": c.split("]", 1)[0].lstrip("[") if c.startswith("[") else ""})
+    for section, piece in chunk_markdown(body):
+        text = f"[{section}]\n{piece}" if section else piece
+        out.append({"text": text[:MAX_CHARS + len(section) + 2], "section": section})
     return out

@@ -5,8 +5,10 @@
 1. 不阻塞 Stop：同步只做 mtime 短路判断，真实索引用 DETACHED 子进程派生后立即退出
 2. 幂等短路：vault 最新 mtime <= 上次信号 → 秒退（大部分会话是这种情况）
 3. 防死循环：消费 stop_hook_active 标志
-4. 全量留痕：data/index_auto.log 追加日志
-5. 干跑模式：--check 只打印决策不改状态
+4. 防并发：原子锁文件（O_EXCL），已有索引进程在跑则本次跳过（下次会话结束再触发）
+5. 失败自愈：子进程失败时 run_index.py 会把信号归零，变更不会被永久标记为已索引
+6. 全量留痕：data/index_auto.log 追加日志
+7. 干跑模式：--check 只打印决策不改状态
 
 用法：
     python stop_hook.py          # 作为 Stop hook 被 Claude Code 调用（stdin 收 JSON）
@@ -17,18 +19,18 @@ import os
 import subprocess
 import sys
 import time
-import os
-import os
-import os
 from pathlib import Path
 
-BASE = Path(r"D:\AI Coding\vault-rag")
+BASE = Path(__file__).resolve().parent
 VAULT = Path(os.environ.get("VAULT_PATH", str(Path.home() / "Documents" / "Obsidian Vault")))
 SIGNAL = BASE / "data" / ".last_index_signal"
 LOG = BASE / "data" / "index_auto.log"
+LOCK = BASE / "data" / "index_running.lock"
+LOCK_STALE_SECONDS = 6 * 3600   # 锁超过 6 小时视为残留（崩溃未清理）
 
 
 def log(msg: str):
+    LOG.parent.mkdir(parents=True, exist_ok=True)
     with open(LOG, "a", encoding="utf-8") as f:
         f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
 
@@ -47,6 +49,28 @@ def vault_latest_mtime() -> float:
         except OSError:
             continue
     return latest
+
+
+def acquire_lock() -> bool:
+    """原子获取索引锁；残留死锁（超时）则清理后重试一次。"""
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, f"{time.time():.3f}".encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                age = time.time() - LOCK.stat().st_mtime
+                if age > LOCK_STALE_SECONDS:
+                    log(f"stale lock removed (age={age/3600:.1f}h)")
+                    LOCK.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                continue
+            return False
+    return False
 
 
 def main() -> int:
@@ -80,6 +104,12 @@ def main() -> int:
               f" -> would spawn incremental index")
     if check_only:
         print("[dry-run] " + action)
+        return 0
+
+    if not acquire_lock():
+        msg = "index already running, skip this trigger (will retry next session end)"
+        print(msg)
+        log(msg)
         return 0
 
     # 成熟模式 1：DETACHED 派生真实索引，主进程立刻返回不阻塞会话退出

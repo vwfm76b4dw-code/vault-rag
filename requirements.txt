@@ -1,0 +1,20 @@
+# vault-rag 依赖
+# 安装：pip install -r requirements.txt
+# 测试（无需 torch）：python -m unittest discover -s tests
+
+# ---- 核心 ----
+numpy>=1.26
+requests>=2.31
+
+# ---- 本地 embedding（indexer_qwen.py / search.py / rag_mcp.py）----
+# CPU 版 torch：pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
+transformers>=4.51
+
+# ---- MCP 服务器（rag_mcp.py）----
+mcp>=1.0
+
+# ---- 可选：多模态摄取（vl_embedder.py / texture.py / vl_smoke.py）----
+# Pillow>=10
+# qwen-vl-utils>=0.0.8
+# compressed-tensors>=0.15   # 加载第三方 AWQ 量化需要

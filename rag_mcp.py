@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """vault-rag MCP Server — Obsidian 知识库语义检索
 
-与 obsidian-search (FTS 关键词) 互补。模型懒加载：服务器启动秒开，
-首次调用搜索工具时才加载 Qwen3-Embedding-0.6B（约 15 秒）。
+模型懒加载：服务器启动秒开，首次调用搜索工具时才加载 Qwen3-Embedding-0.6B（约 15 秒）。
+向量矩阵由 search.py 统一缓存（库文件变化自动失效），semantic/hybrid 共享。
 """
+from __future__ import annotations
+
 import os
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
@@ -18,14 +20,13 @@ from mcp.server.fastmcp import FastMCP
 # 让 rag_mcp 能 import 同目录的 config/search
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import DB_PATH, DIM, TOP_K, MODEL_NAME_QWEN
+from config import DB_PATH, DIM, MODEL_NAME_QWEN
 
 mcp = FastMCP("vault-rag")
 
 RAG_DB = DB_PATH                       # data/qwen_rag.db
 EXCLUDE = ["%.codex/%"]
 _MODEL_CACHE: dict = {}                # {"model":…, "tokenizer":…}
-_loaded_at: float = 0.0
 
 
 def _ensure_model():
@@ -66,15 +67,15 @@ def _embed_query(query: str):
         return emb.numpy().astype(np.float32)[0]
 
 
-def _keyword_scores(query: str, rows) -> list[float]:
+def _keyword_scores(query: str, texts: list[str]) -> list[float]:
     """轻量关键词得分：查询词命中 chunk 文本的比例，∈[0,1]。"""
     terms = [t for t in re.findall(r"[一-鿿]{2,}|[A-Za-z0-9]{2,}", query)]
     if not terms:
-        return [0.0] * len(rows)
+        return [0.0] * len(texts)
     scores = []
-    for r in rows:
-        text = r["text"].lower()
-        hits = sum(1 for t in terms if t.lower() in text)
+    for text in texts:
+        t = text.lower()
+        hits = sum(1 for term in terms if term.lower() in t)
         scores.append(hits / len(terms))
     return scores
 
@@ -113,38 +114,24 @@ def hybrid_search(query: str, top_k: int = 8) -> dict:
 
     语义召回概念相关内容，关键词兜底精确术语，融合后兼顾两者。
     """
-    con = sqlite3.connect(RAG_DB)
-    con.row_factory = sqlite3.Row
-    qv = _embed_query(query)
-    try:
-        sql = ("SELECT c.chunk_id, c.rel_path, c.section, c.text FROM chunks c "
-               f"WHERE {' AND '.join('c.rel_path NOT LIKE ?' for _ in EXCLUDE)}")
-        rows = con.execute(sql, EXCLUDE).fetchall()
-    finally:
-        con.close()
+    import numpy as np
+    from search import fetch_rows
+
+    rows = fetch_rows()          # (chunk_id, rel_path, section, text, vec_bytes) 同行对齐
     if not rows:
         return {"query": query, "results": []}
+    qv = _embed_query(query)
+    vecs = np.vstack([np.frombuffer(r[4], dtype=np.float32) for r in rows])
 
-    import numpy as np
-    vecs_blob = sqlite3.connect(RAG_DB)
-    blob_rows = vecs_blob.execute(
-        "SELECT id, vec FROM blob_vectors ORDER BY id").fetchall()
-    vecs_blob.close()
-    blob_map = {rid: np.frombuffer(v, dtype=np.float32) for rid, v in blob_rows}
-
-    sem_scores, kw_scores = [], []
-    for r in rows:
-        v = blob_map.get(r["chunk_id"])
-        sem_scores.append(float(v @ qv) if v is not None else 0.0)
-    kw_scores = _keyword_scores(query, rows)
+    sem_scores = vecs @ qv
+    kw_scores = np.asarray(_keyword_scores(query, [r[3] for r in rows]), dtype=np.float64)
 
     # RRF 融合
-    def rrf(scores):
-        order = sorted(range(len(scores)), key=lambda i: -scores[i])
-        rank = {i: pos + 1 for pos, i in enumerate(order)}
-        return {i: 1.0 / (60 + rank[i]) for i in order}
+    def rrf(scores: np.ndarray) -> dict[int, float]:
+        order = np.argsort(-scores)
+        return {int(i): 1.0 / (60 + pos + 1) for pos, i in enumerate(order)}
 
-    fused = {}
+    fused: dict[int, float] = {}
     for src in (rrf(sem_scores), rrf(kw_scores)):
         for i, s in src.items():
             fused[i] = fused.get(i, 0.0) + s
@@ -152,14 +139,14 @@ def hybrid_search(query: str, top_k: int = 8) -> dict:
 
     results = []
     for i, score in top:
-        r = rows[i]
+        cid, rel, sec, txt, _vec = rows[i]
         results.append({
             "fused_score": round(score, 4),
-            "semantic": round(sem_scores[i], 3),
-            "keyword": round(kw_scores[i], 2),
-            "path": r["rel_path"],
-            "section": r["section"],
-            "snippet": r["text"].replace("\n", " ")[:200],
+            "semantic": round(float(sem_scores[i]), 3),
+            "keyword": round(float(kw_scores[i]), 2),
+            "path": rel,
+            "section": sec or "",
+            "snippet": txt.replace("\n", " ")[:200],
         })
     return {"query": query, "mode": "rrf(semantic+keyword)", "results": results}
 
@@ -172,6 +159,7 @@ def rag_status() -> dict:
         notes = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
         chunks = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         blobs = con.execute("SELECT COUNT(*) FROM blob_vectors").fetchone()[0]
+        cache = con.execute("SELECT COUNT(*) FROM embed_cache").fetchone()[0]
         try:
             meta = {k: v for k, v in con.execute("SELECT key, value FROM meta")}
         except sqlite3.OperationalError:
@@ -185,6 +173,7 @@ def rag_status() -> dict:
         "notes_indexed": notes,
         "chunks": chunks,
         "vectors_stored": blobs,
+        "embed_cache": cache,
         "dim": DIM,
         "consistent": chunks == blobs,
         "meta": meta,
@@ -197,26 +186,31 @@ def rag_status() -> dict:
 def refresh_index(max_files: int = 0) -> dict:
     """增量更新 RAG 索引（跳过未修改的笔记）。
 
-    调用 indexer_qwen.index() 断点续传逻辑。写完新笔记后执行一次即可同步。
-    注意：有新内容时会阻塞数分钟到数十分钟，无新内容则秒回。
+    写完新笔记后执行一次即可同步。无新内容秒回；有新内容时按篇数耗时。
     Args:
         max_files: 仅处理前 N 篇待处理笔记（0=全部），用于小步增量。
     """
-    # 重跑 index() 是模块级函数，max_files 通过截断 todo 实现——
-    # 简化方案：直接复用现有断点续传（无 max_files 时全量增量）
-    import io
     import contextlib
+    import io
     import indexer_qwen
 
     buf_out, buf_err = io.StringIO(), io.StringIO()
-    with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
-        indexer_qwen.index()
+    try:
+        with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+            indexer_qwen.index(max_files=max_files)
+    except Exception as e:                       # 索引失败也要把现场带回给调用方
+        return {"ok": False, "error": f"{type(e).__name__}: {e}",
+                "log_tail": "\n".join((buf_out.getvalue() + buf_err.getvalue())
+                                      .strip().splitlines()[-5:])}
     log_tail = "\n".join((buf_out.getvalue() + buf_err.getvalue()).strip().splitlines()[-5:])
     con = sqlite3.connect(RAG_DB)
     chunks = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     blobs = con.execute("SELECT COUNT(*) FROM blob_vectors").fetchone()[0]
     notes = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     con.close()
+    # 索引刚变过，清掉进程内向量缓存让下次查询重新加载
+    import search
+    search._CACHE["stamp"] = None
     return {"ok": True, "notes": notes, "chunks": chunks,
             "vectors": blobs, "log_tail": log_tail}
 

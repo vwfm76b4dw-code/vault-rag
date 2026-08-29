@@ -4,7 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 
-USER = os.environ.get("USERNAME") or os.environ.get("USER") or "27114"
+USER = os.environ.get("USERNAME") or os.environ.get("USER") or ""
 OLD_VAULT = 'VAULT = Path(r"C:\\Users\\' + USER + '\\Documents\\Obsidian Vault")'
 NEW_VAULT = ('VAULT = Path(os.environ.get("VAULT_PATH", '
              'str(Path.home() / "Documents" / "Obsidian Vault")))')

@@ -12,15 +12,15 @@ import sqlite3
 import sys
 import time
 import os
-import os
-import os
 from pathlib import Path
 
 import numpy as np
 import requests
 
-VAULT = Path(os.environ.get("VAULT_PATH", str(Path.home() / "Documents" / "Obsidian Vault")))
-OUT_DIR = Path(r"D:\AI Coding\vault-rag\data\qwen")
+sys.path.insert(0, str(Path(__file__).parent))
+from config import VAULT, DATA_DIR
+
+OUT_DIR = DATA_DIR / "qwen"
 DB_PATH = OUT_DIR / "rag.db"
 VEC_PATH = OUT_DIR / "vectors.npy"
 API_URL = "http://127.0.0.1:1234/v1/embeddings"
@@ -111,14 +111,20 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
     qv = np.asarray(probe[0], dtype=np.float32)
     qv /= np.linalg.norm(qv)
     vecs = np.load(VEC_PATH, mmap_mode="r")
-    vecs /= np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
+    vecs = vecs / np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
     sims = vecs @ qv
     order = np.argsort(-sims)[:top_k]
     con = sqlite3.connect(DB_PATH)
-    rows = con.execute("SELECT rel_path, text FROM chunks WHERE chunk_id IN ({})".format(
-        ",".join(str(int(i)) for i in order))).fetchall()
-    return [{"score": float(sims[int(i)]), "rel_path": r[0], "text": r[1][:150]}
-            for i, r in zip(order, rows)]
+    by_id = {r[0]: r for r in con.execute(
+        "SELECT chunk_id, rel_path, text FROM chunks WHERE chunk_id IN ({})".format(
+            ",".join(str(int(i)) for i in order)))}
+    con.close()
+    out = []
+    for i in order:                      # IN 查询不保证顺序，按 order 重建配对
+        r = by_id.get(int(i))
+        if r is not None:
+            out.append({"score": float(sims[int(i)]), "rel_path": r[1], "text": r[2][:150]})
+    return out
 
 
 def fmt(results):

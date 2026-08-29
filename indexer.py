@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""索引器：vault → 切块 → embedding → data/{rag.db, vectors.npy}
+"""索引器（LEGACY）：vault → 切块 → embedding → data/{rag.db, vectors.npy}
+
+已由 indexer_qwen.py（SQLite BLOB 存储）取代，仅保留用于 LM Studio HTTP 端点场景。
+产物走独立的 LEGACY_DB_PATH/LEGACY_VEC_PATH，与主库 qwen_rag.db 互不影响。
 
 特性：
 - vault 只读，产物全部落 data/
@@ -17,7 +20,8 @@ from pathlib import Path
 import numpy as np
 import requests
 
-from config import (VAULT, DATA_DIR, DB_PATH, VEC_PATH, API_URL, MODEL, DIM,
+from config import (VAULT, DATA_DIR, LEGACY_DB_PATH as DB_PATH,
+                    LEGACY_VEC_PATH as VEC_PATH, API_URL, MODEL, DIM,
                     REQUEST_TIMEOUT, MAX_RETRIES, RETRY_BACKOFF,
                     P0_DIRS, SKIP_DIRS, ALIVE_PROBE_TIMEOUT)
 from chunker import chunk_note

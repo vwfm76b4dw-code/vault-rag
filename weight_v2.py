@@ -15,11 +15,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import DATA_DIR, VAULT
+from config import DATA_DIR, VAULT, FTS_DB
 import scope as scopes
 
 WDB = DATA_DIR / "weights.db"
-VDB = Path.home() / ".claude/mcp_servers/obsidian-search/vault_new.db"
 
 DIMENSIONS = ("structure", "density", "timeliness", "uniqueness")
 
@@ -43,7 +42,7 @@ def compute_graph():
         t = t.split("|")[0].strip()
         return Path(t).name if "/" in t or t.endswith(".md") else t + ".md"
     try:
-        vc = sqlite3.connect(f"file:{VDB}?mode=ro", uri=True)
+        vc = sqlite3.connect(f"file:{FTS_DB}?mode=ro", uri=True)
         tables = {r[0] for r in vc.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         if "notes_links" in tables:
@@ -95,8 +94,11 @@ def ai_eval_batch(texts_labels, backend="claude"):
     try:
         if backend == "claude":
             import shutil as _sh
-            base = Path(os.environ["APPDATA"]) / "npm" / "node_modules" / "@anthropic-ai" / "claude-code"
-            wrapper = base / "cli-wrapper.cjs"
+            # wrapper 路径可经环境变量覆盖；默认定位 npm 全局安装的 claude-code
+            wrapper = Path(os.environ.get(
+                "CLAUDE_WRAPPER",
+                str(Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules"
+                    / "@anthropic-ai" / "claude-code" / "cli-wrapper.cjs")))
             node = _sh.which("node") or "node"
             if not wrapper.exists():
                 raise RuntimeError("claude CLI wrapper 不存在")
@@ -115,7 +117,14 @@ def ai_eval_batch(texts_labels, backend="claude"):
                       "temperature": 0}, timeout=120)
             out = rj.json()["choices"][0]["message"]["content"]
         m = re.search(r"\[.*\]", out, re.S)
-        return {int(e["id"]): e["scores"] for e in json.loads(m.group(0))} if m else {}
+        if not m:
+            return {}
+        parsed = {}
+        for e in json.loads(m.group(0)):
+            sc = e.get("scores") or []
+            if len(sc) >= 4:      # 防御：截断到四维并夹紧 0~25，LLM 偶发越界
+                parsed[int(e["id"])] = [max(0, min(25, int(s))) for s in sc[:4]]
+        return parsed
     except Exception as e:
         print(f"[ai] backend={backend} failed: {str(e)[:60]}", flush=True)
         return {}

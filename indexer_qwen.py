@@ -15,16 +15,16 @@
 6. [低] tokenizer 未设 pad_token 时批量 padding 可能报错（Qwen3 tokenizer 自带
    pad token，防御性设置一次）。
 """
+from __future__ import annotations
+
 import os
-os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+os.environ.setdefault('HF_ENDPOINT', 'https://hf-mirror.com')
 import sqlite3, time, sys, traceback
 from pathlib import Path
 
 import numpy as np
-import torch
-from transformers import AutoModel, AutoTokenizer
 
-from config import VAULT, DATA_DIR, DB_PATH, VEC_PATH
+from config import DATA_DIR, DB_PATH
 from chunker import chunk_note
 import scope as scopes
 
@@ -33,8 +33,17 @@ DIM = 1024
 BATCH_SIZE = 16       # embedding 批量
 MAX_LEN = 512         # tokenizer 截断长度
 
+_MODEL = None
+_TOKENIZER = None
+
 
 def load_model():
+    """加载编码模型（进程内只加载一次；import 本模块不触发）。"""
+    global _MODEL, _TOKENIZER
+    if _MODEL is not None:
+        return _MODEL, _TOKENIZER
+    import torch
+    from transformers import AutoModel, AutoTokenizer
     print(f"加载 {MODEL_NAME} (CPU, float32)...", flush=True)
     model = AutoModel.from_pretrained(MODEL_NAME, trust_remote_code=True).float().eval()
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
@@ -42,10 +51,8 @@ def load_model():
         tokenizer.pad_token = tokenizer.eos_token
     torch.set_num_threads(min(10, os.cpu_count()))    # 明确线程数，避免争抢
     print("加载完成", flush=True)
+    _MODEL, _TOKENIZER = model, tokenizer
     return model, tokenizer
-
-
-MODEL, TOKENIZER = load_model()
 
 
 def last_token_pool(last_hidden: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -56,10 +63,12 @@ def last_token_pool(last_hidden: torch.Tensor, attention_mask: torch.Tensor) -> 
 
 
 def embed_batch(texts: list[str]) -> np.ndarray:
+    import torch
+    model, tokenizer = load_model()
     with torch.no_grad():
-        inputs = TOKENIZER(texts, return_tensors="pt", padding=True,
+        inputs = tokenizer(texts, return_tensors="pt", padding=True,
                            truncation=True, max_length=MAX_LEN)
-        outputs = MODEL(**inputs)
+        outputs = model(**inputs)
         emb = last_token_pool(outputs.last_hidden_state, inputs["attention_mask"])
         emb = torch.nn.functional.normalize(emb, p=2, dim=1)   # L2 归一化，检索必需
         return emb.numpy().astype(np.float32)
@@ -143,8 +152,6 @@ def reconcile(con: sqlite3.Connection):
 
 def collect_todo(con: sqlite3.Connection):
     """基于 include.txt 声明范围发现待办：新增/修改篇编码，越界篇清除。"""
-    from config import SKIP_DIRS as _unused  # noqa: F401  (旧配置仅存兼容)
-
     done = {r[0]: r[1] for r in con.execute("SELECT rel_path, mtime FROM notes")}
     current = dict(scopes.collect_files())          # rel_path -> abs Path
 
@@ -171,7 +178,8 @@ def collect_todo(con: sqlite3.Connection):
     return todo, n_skip
 
 
-def index():
+def index(max_files: int = 0):
+    """增量索引。max_files>0 时本次只处理前 N 篇待处理笔记（小步增量）。"""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_PATH)
     init_db(con)
@@ -179,6 +187,8 @@ def index():
 
     base_n = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     todo, n_skip = collect_todo(con)
+    if max_files and max_files > 0:
+        todo = todo[:max_files]
     print(f"[scan] 待处理 {len(todo)} 篇 | 跳过 {n_skip} 篇 | 已有 {base_n} 块", flush=True)
     if not todo:
         print("[done] 无需更新", flush=True)

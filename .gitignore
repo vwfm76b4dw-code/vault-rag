@@ -5,26 +5,19 @@ data/*.bak*
 data/*.npy
 data/*.log
 data/*.txt
+data/*.md
 data/ppt_imgs/
 data/_*
+data/.*
 models/
+
+# 内部状态
 .ragfiles/
+.loopx/
+.codex/
+
+# Python
 __pycache__/
+*.pyc
 *.tmp*
-
-.loopx/
-.codex/
-data/.last_index_signal
-data/launcher.txt
-
-.loopx/
-.codex/
-data/.last_index_signal
-data/launcher.txt
-
-.loopx/
-.codex/
-data/.last_index_signal
-data/launcher.txt
-save_patch.py
-search_patch.py
+.venv/

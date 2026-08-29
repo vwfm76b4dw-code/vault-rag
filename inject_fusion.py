@@ -19,7 +19,7 @@ FUSION = '''
 # == RAG 深度融合层 (2026-08-28) ======================================
 import urllib.request as _urlreq
 
-_RAG_DIR = Path("D:/AI Coding/vault-rag")
+_RAG_DIR = Path(r"@VAULT_RAG_ROOT@")   # 由 inject_fusion.py 注入时替换为本仓库根
 _RAG_DB = _RAG_DIR / "data" / "qwen_rag.db"
 _REL_DB = _RAG_DIR / "data" / "relations.db"
 _EMB_URL = "http://127.0.0.1:1234/v1/embeddings"
@@ -53,7 +53,7 @@ def semantic_search(query: str, top_k: int = 8, scope_dir: str = "") -> dict:
     """
     import numpy as np
     if not _RAG_DB.exists():
-        return {"error": "向量库不存在，先跑 D:/AI Coding/vault-rag/run_index.py"}
+        return {"error": "向量库不存在，先跑 run_index.py 建索引"}
     ev = _embed_remote([_QUERY_INSTR + query])
     if not ev:
         fb = search_notes_advanced(query, mode="hybrid", limit=top_k)
@@ -162,6 +162,7 @@ def note_freshness(path: str) -> dict:
 anchor = 'if __name__ == "__main__":'
 assert anchor in src, "anchor missing"
 src = src.replace(anchor, FUSION + anchor)
+src = src.replace("@VAULT_RAG_ROOT@", str(Path(__file__).resolve().parent))
 BASE.write_text(src, encoding="utf-8")
 import ast
 ast.parse(src)

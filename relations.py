@@ -13,7 +13,7 @@ import re, sqlite3, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import DATA_DIR
+from config import DATA_DIR, DB_PATH, FTS_DB
 from freshness import VAULT, extract_signals, rank_cluster, cluster_of, cluster_kind
 import scope as scopes
 
@@ -30,6 +30,32 @@ def init(con):
         CREATE INDEX IF NOT EXISTS idx_e_src ON edges(src);
         CREATE INDEX IF NOT EXISTS idx_e_dst ON edges(dst);
     """)
+
+
+def _wikilink_edges(con, members: dict):
+    """④ references：读外部 Obsidian FTS 库的现成 wikilink 图（可选依赖）。"""
+    if not FTS_DB.exists():
+        return 0
+    try:
+        vc = sqlite3.connect(f"file:{FTS_DB}?mode=ro", uri=True)
+        tables = {r[0] for r in vc.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "notes_links" not in tables:
+            vc.close()
+            return 0
+    except sqlite3.Error as e:
+        print(f"[refs] FTS 库不可用，跳过 wikilink 边: {str(e)[:60]}")
+        return 0
+    by_stem = {Path(r).stem: r for r in members}
+    n = 0
+    for src, tgt in vc.execute("SELECT source, target FROM notes_links"):
+        tnorm = tgt.split("/")[-1].replace(".md", "")
+        dst = by_stem.get(tnorm)
+        if dst and dst != src and src in members:
+            con.execute("INSERT OR IGNORE INTO edges VALUES(?,?,?,?,?)",
+                        (src, dst, "references", 1.0, "wikilink"))
+            n += 1
+    vc.close()
+    return n
 
 
 def build_edges():
@@ -51,6 +77,8 @@ def build_edges():
         kind = cluster_kind(ms)
         w, stale = rank_cluster(ms)
         if kind == "version":
+            if not w:                # 全簇皆残骸时无权威，不产 junk 边
+                continue
             for s in stale:
                 con.execute("INSERT OR REPLACE INTO edges VALUES(?,?,?,?,?)",
                             (w, s, "supersedes", 0.95, "freshness S1/S2 裁决"))
@@ -58,19 +86,10 @@ def build_edges():
             dated = sorted((m for m in ms if m.best_date), key=lambda m: m.best_date)
             for a, b in zip(dated, dated[1:]):
                 con.execute("INSERT OR REPLACE INTO edges VALUES(?,?,?,?,?)",
-                            (a.rel_path, b.rel_path, "sibling_next", 0.9, f"时序流 {a.best_date}→{b.best_date}"))
+                            (a.rel_path, b.rel_path, "sibling_next", 0.9,
+                             f"时序流 {a.best_date}→{b.best_date}"))
     # ④ references（读现成 wikilink 图）
-    vdb = Path.home() / ".claude/mcp_servers/obsidian-search/vault_new.db"
-    if vdb.exists():
-        vc = sqlite3.connect(f"file:{vdb}?mode=ro", uri=True)
-        by_stem = {Path(r).stem: r for r in members}
-        for src, tgt in vc.execute("SELECT source, target FROM notes_links"):
-            tnorm = tgt.split("/")[-1].replace(".md", "")
-            dst = by_stem.get(tnorm)
-            if dst and dst != src and src in members:
-                con.execute("INSERT OR IGNORE INTO edges VALUES(?,?,?,?,?)",
-                            (src, dst, "references", 1.0, "wikilink"))
-        vc.close()
+    _wikilink_edges(con, members)
     con.commit()
     n = {k: c for k, c in con.execute("SELECT kind, COUNT(*) FROM edges GROUP BY kind")}
     con.close()
@@ -78,17 +97,18 @@ def build_edges():
 
 
 def complement_scan(sample_limit=None):
-    """③ complements：跨簇高相似对。需模型，单独跑批（较慢）。"""
+    """③ complements：跨簇高相似对。需模型，单独跑批（较慢）。
+
+    分块计算 top-k 近邻（块 × 全库），避免 3 万篇时 O(N²) 矩阵吃掉数 GB 内存。
+    """
     import numpy as np
-    from search import embed_query, search as _s   # noqa
     con = sqlite3.connect(DB); init(con)
-    # 每篇取首块向量做代表 → 两两比较成本高；改用 top-k 近邻法：
-    # 对每个"簇代表块"检索相似内容，过滤同簇，sim≥0.75 记 complements
-    sc = sqlite3.connect(str(DATA_DIR / "qwen_rag.db"))
+    sc = sqlite3.connect(DB_PATH)
     reps = {}
     for cid, rp, txt in sc.execute(
             "SELECT chunk_id, rel_path, text FROM chunks WHERE seq=0 AND rel_path NOT LIKE '%.codex%'"):
         reps[rp] = (cid, txt)
+    sc.close()
     import indexer_qwen as iq
     items = list(reps.items())
     if sample_limit: items = items[:sample_limit]
@@ -101,18 +121,25 @@ def complement_scan(sample_limit=None):
         texts = [reps[k][1][:600] for k in keys[i:i+BATCH]]
         embs.append(iq.embed_batch(texts))
         print(f"\rcomplement encode {min(i+BATCH,len(keys))}/{len(keys)}", end="", flush=True)
-    E = np.vstack(embs); E /= np.linalg.norm(E, axis=1, keepdims=True)
-    S = E @ E.T
+    E = np.vstack(embs)                      # embed_batch 已 L2 归一化
     ck = {k: cluster_of(k) for k in keys}
-    for i, ka in enumerate(keys):
-        for j in np.argsort(-S[i])[:8]:
-            if j <= i: continue
-            kb = keys[int(j)]
-            if S[i, int(j)] < 0.75: break
-            if ck[ka] == ck[kb]: continue          # 同簇已处理
-            con.execute("INSERT OR REPLACE INTO edges VALUES(?,?,?,?,?)",
-                        (ka, kb, "complements", float(S[i, int(j)]), "跨簇向量相似"))
-            added += 1
+    BLOCK = 512
+    for s0 in range(0, len(keys), BLOCK):
+        s1 = min(s0 + BLOCK, len(keys))
+        S_block = E[s0:s1] @ E.T             # 块×全库，峰值内存 = 512×N
+        for bi in range(s1 - s0):
+            i = s0 + bi
+            row = S_block[bi]
+            for j in np.argsort(-row)[:8]:
+                j = int(j)
+                if j <= i: continue
+                if row[j] < 0.75: break
+                ka, kb = keys[i], keys[j]
+                if ck[ka] == ck[kb]: continue          # 同簇已处理
+                con.execute("INSERT OR REPLACE INTO edges VALUES(?,?,?,?,?)",
+                            (ka, kb, "complements", float(row[j]), "跨簇向量相似"))
+                added += 1
+        print(f"\rcomplement compare {s1}/{len(keys)}", end="", flush=True)
     con.commit(); con.close()
     return added
 

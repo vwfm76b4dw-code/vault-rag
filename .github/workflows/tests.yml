@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+    branches: [release, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install test deps（不含 torch，测试零模型依赖）
+        run: pip install numpy requests
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v

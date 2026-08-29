@@ -6,13 +6,14 @@
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 def embed(texts: list[str], model: str, ctx_size: int = 512) -> list[list[float]]:
-    """调用 llama-embedding.exe 生成向量。"""
-    exe = r"D:\llama.cpp\build\bin\llama-embedding.exe"
+    """调用 llama-embedding.exe 生成向量。exe 路径经 LLAMA_EMBED_EXE 覆盖。"""
+    exe = os.environ.get("LLAMA_EMBED_EXE", r"D:\llama.cpp\build\bin\llama-embedding.exe")
     if not Path(exe).exists():
         raise RuntimeError(f"llama-embedding.exe 不存在: {exe}")
     # llama-embedding 从 stdin 读取文本，每行一条

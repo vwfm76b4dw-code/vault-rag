@@ -13,16 +13,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from freshness import VAULT, extract_signals, rank_cluster, cluster_kind
 from config import DATA_DIR
+import scope as scopes
 
 OUT_MD = DATA_DIR / "project_trees.md"
 
 
 def build_clusters():
     clusters = defaultdict(list)
-    for p in VAULT.rglob("*.md"):
-        rel = p.relative_to(VAULT).as_posix()
-        if any(part.startswith(".") for part in rel.split("/")):
-            continue
+    for rel, p in scopes.collect_files():        # 与索引器同一声明范围
         try:
             f = extract_signals(p, rel)
         except Exception:

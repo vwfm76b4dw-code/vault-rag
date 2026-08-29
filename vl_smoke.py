@@ -38,9 +38,15 @@ trunc = trunc / np.maximum(np.linalg.norm(trunc, axis=1, keepdims=True), 1e-9)
 sim_matrix = trunc @ trunc.T
 print(f"MRL→1024 截断 OK，自相似度矩阵:\n{sim_matrix}")
 
-# 图像编码冒烟（用 vault 里现成的 png 试一张）
-img_path = r"F:\测试\b8cda566850a3a478f5cdf79fdc4a6f7.png"
-if os.path.exists(img_path):
+# 图像编码冒烟（从本仓库 data/ppt_imgs 取一张现成图，无则跳过）
+img_path = None
+imgs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "ppt_imgs")
+if os.path.isdir(imgs_dir):
+    for name in sorted(os.listdir(imgs_dir)):
+        if name.lower().endswith((".png", ".jpg", ".jpeg")):
+            img_path = os.path.join(imgs_dir, name)
+            break
+if img_path:
     t0 = time.time()
     vi = emb.process([{"image": img_path}]).float().cpu().numpy().astype(np.float32)
     print(f"图像编码: {time.time()-t0:.1f}s | dim={vi.shape[1]}")
@@ -49,4 +55,4 @@ if os.path.exists(img_path):
     vii = vi[0][:vt.shape[0]] / max(np.linalg.norm(vi[0][:vt.shape[0]]), 1e-9)
     print(f"文本『海滩女子与狗』 vs 该图的余弦: {float(vt @ vii):.3f}")
 else:
-    print("(无测试图片路径，跳过图像项)")
+    print("(data/ppt_imgs 下无测试图片，跳过图像项)")

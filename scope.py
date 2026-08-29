@@ -5,8 +5,9 @@ include.txt 语法见该文件头部注释。匹配器语义：
 - 规则按行序生效，后写的 '!排除' 覆盖先写的包含
 - 目录规则 'dir/' = 前缀匹配该目录下所有内容
 - glob 用 fnmatch（* 不跨目录）；'**' 支持跨目录段
+- vault 内文件：最后一条命中的规则决定去留（include 收 / exclude 排）
+- 外部 @ 文件：在其规则位置加入，之后出现的 exclude 规则仍可将其排除
 """
-import fnmatch
 import re
 from pathlib import Path
 
@@ -14,7 +15,28 @@ from config import VAULT
 
 INCLUDE_PATH = Path(__file__).parent / "include.txt"
 
-Rule = tuple  # ("include"|"exclude", pattern) / ("external", abs_path, alias)
+Rule = tuple  # ("include"|"exclude", pred) / ("external", abs_path, alias)
+
+
+def _glob_to_rx(pat: str) -> str:
+    """glob → 正则：'**' 跨目录段，'*'/'?' 不跨目录（fnmatch 的 * 会跨，语义不符）。"""
+    out, i = [], 0
+    while i < len(pat):
+        c = pat[i]
+        if c == "*":
+            if i + 1 < len(pat) and pat[i + 1] == "*":
+                out.append(".*")
+                i += 2
+                continue
+            out.append("[^/]*")
+            i += 1
+        elif c == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(c))
+            i += 1
+    return "".join(out)
 
 
 def parse_rules(text: str | None = None) -> list[Rule]:
@@ -42,52 +64,62 @@ def parse_rules(text: str | None = None) -> list[Rule]:
 
 
 def _compile(pattern: str):
-    """返回 f(rel_posix_lower) -> bool 的判定函数。"""
+    """返回 f(rel_posix) -> bool 的判定函数。"""
     pattern = pattern.lstrip("/")
     if pattern.endswith("/"):
         prefix = pattern.rstrip("/")
         pl = prefix.lower()
         return lambda rp: rp.lower().startswith(pl + "/")
-    # 根级文件通配（如 *.md）：fnmatch 本身不跨目录（* 不匹配 /），正好符合语义
-    pl = pattern.lower()
-    return lambda rp: fnmatch.fnmatchcase(rp.lower(), pl)
+    # 文件通配：'*' 不跨目录（*.md 只匹配根级），'**' 才跨目录，见 include.txt 语法说明
+    rx = re.compile(_glob_to_rx(pattern.lower()))
+    return lambda rp: rx.fullmatch(rp.lower()) is not None
 
 
-def collect_files() -> list[tuple[str, Path]]:
+def _iter_vault_md():
+    """单次扫描 vault 全部 md（隐藏目录除外）。"""
+    for p in VAULT.rglob("*.md"):
+        rel = p.relative_to(VAULT).as_posix()
+        if any(part.startswith(".") for part in rel.split("/")):
+            continue          # 隐藏目录永远不进候选池
+        yield rel, p
+
+
+def collect_files(rules: list[Rule] | None = None) -> list[tuple[str, Path]]:
     """解析 include.txt → [(rel_path 用于入库显示, 绝对 Path)]。
 
     - vault 内文件以相对 POSIX 路径标识
     - 外部 @ 文件以 'external/...' 别名标识
+    - rules 可注入（测试用），默认读 include.txt
     """
-    rules = parse_rules()
+    rules = parse_rules() if rules is None else rules
     out: dict[str, Path] = {}
 
-    for rule in rules:
-        kind = rule[0]
-        if kind == "exclude":
-            pred = rule[1]
-            out = {rp: p for rp, p in out.items() if not pred(rp)}
-            continue
+    # vault 内：单次扫描，逐文件找最后一条命中规则（O(文件数×规则数)，规则通常 <20）
+    ext_rules: list[tuple[int, str, str | None]] = []
+    for idx, rule in enumerate(rules):
+        if rule[0] == "external":
+            ext_rules.append((idx, rule[1], rule[2]))
 
-        candidates: list[tuple[str, Path]] = []
-        if kind == "include":
-            pred = rule[1]
-            for p in VAULT.rglob("*.md"):
-                rel = p.relative_to(VAULT).as_posix()
-                if any(part.startswith(".") for part in rel.split("/")):
-                    continue          # 隐藏目录永远不进候选池
-                if pred(rel):
-                    candidates.append((rel, p))
-        else:  # external
-            _, abs_str, alias = rule
-            ap = Path(abs_str)
-            if not ap.exists():
-                continue              # 外部文件不存在则静默跳过（日志由调用方负责）
-            name = alias or ("external/" + ap.name)
-            candidates.append((name, ap))
-
-        for rel, p in candidates:
+    for rel, p in _iter_vault_md():
+        verdict = None                      # 最后命中的规则类型
+        for idx, rule in enumerate(rules):
+            if rule[0] == "include" and rule[1](rel):
+                verdict = "include"
+            elif rule[0] == "exclude" and rule[1](rel):
+                verdict = "exclude"
+        if verdict == "include":
             out[rel] = p
+
+    # 外部：按规则序加入，其后的 exclude 仍可排除（与旧行为一致）
+    for idx, abs_str, alias in ext_rules:
+        ap = Path(abs_str)
+        if not ap.exists():
+            continue              # 外部文件不存在则静默跳过（日志由调用方负责）
+        name = alias or ("external/" + ap.name)
+        if any(rule[0] == "exclude" and rule[1](name)
+               for rule in rules[idx + 1:]):
+            continue
+        out[name] = ap
 
     return sorted(out.items())
 

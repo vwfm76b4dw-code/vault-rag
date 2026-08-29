@@ -29,13 +29,10 @@ for name in FILES:
             print(f"[fail] {name} HTTP {r.status_code}", flush=True)
             continue
         total = pos + int(r.headers.get("content-length", 0))
-        t0 = time.time()
         with open(dest, "ab" if pos else "wb") as f:
             for chunk in r.iter_content(4 << 20):
                 f.write(chunk)
                 pos += len(chunk)
-                if int(time.time()) % 20 == 0 and time.time() - t0 > 1:
-                    pass
         mode = "续传完成" if expect else "完成"
         print(f"[{mode}] {name} {pos/1e6:.0f}MB", flush=True)
 print("ALL DONE", flush=True)

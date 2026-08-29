@@ -8,16 +8,14 @@
   S4 git 基线   .ragfiles manifest 的 mtime diff → 真实编辑史
   S5 向量近重复 sim≥0.92 → 合并候选交人工裁
 """
+import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
-import os
-import os
-import os
 from pathlib import Path
 
 VAULT = Path(os.environ.get("VAULT_PATH", str(Path.home() / "Documents" / "Obsidian Vault")))
 DATE_IN_NAME = re.compile(r"(20\d{2})[-—]?(\d{2})?(?:[-—]?(\d{2}))?")
+DATE_FULL = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
 FM_KV = re.compile(r"^(updated|date|superseded_by|replaced_by)\s*:\s*(.+)$", re.M)
 HIST_MARK = re.compile(r"历史版本|superseded|已被替代|旧版存档")
 
@@ -61,10 +59,12 @@ def extract_signals(path: Path, rel: str) -> Freshness:
     else:
         body_dates = re.findall(r"\b20\d{2}-\d{2}(?:-\d{2})?\b", raw)
         embedded = max(body_dates) if body_dates else None
+    updated_raw = fm.get("updated")
+    superseded_raw = fm.get("superseded_by") or fm.get("replaced_by")
     return Freshness(
         rel_path=rel, size=len(raw), embedded_date=embedded,
-        declared_updated=str(fm.get("updated"))[:10] or None,
-        superseded_by=str(fm.get("superseded_by") or fm.get("replaced_by") or "") or None,
+        declared_updated=str(updated_raw)[:10] if updated_raw else None,
+        superseded_by=str(superseded_raw) if superseded_raw else None,
         has_history_mark=bool(HIST_MARK.search(head)),
         cluster_key=cluster_of(rel))
 
@@ -79,15 +79,26 @@ def cluster_of(rel: str) -> str:
 
 
 def rank_cluster(members: list[Freshness]) -> tuple[str, list[str]]:
-    """返回 (权威文件, 应沉底/归档列表)。S2 规则：最大者×5 倍于小者 → 小者为残骸。"""
+    """返回 (权威文件, 应沉底/归档列表)。
+
+    S1 显式声明优先于 S2 体积断层：被 superseded_by 指名的文件是权威，
+    即使它比残骸小，也不得被 S2 规则再判为残骸。
+    """
     for m in members:
         m.is_stale_source = m.has_history_mark or bool(m.superseded_by)
+    declared_targets = set()
+    for m in members:
+        if m.superseded_by:
+            t = m.superseded_by.strip()
+            declared_targets.add(t)
+            declared_targets.add(Path(t).stem)
     by_size = sorted(members, key=lambda x: -x.size)
     if len(by_size) >= 2 and by_size[-1].size * 5 <= by_size[0].size:
         for m in by_size[1:]:
-            if m.size * 5 <= by_size[0].size:
+            if (m.size * 5 <= by_size[0].size
+                    and m.rel_path not in declared_targets
+                    and Path(m.rel_path).stem not in declared_targets):
                 m.is_stale_source = True
-    ranked = sorted(members, key=lambda m: (not m.authority_rank[0], ), reverse=False)
     fresh = [m for m in members if not m.is_stale_source]
     stale = [m for m in members if m.is_stale_source]
     winner = max(fresh, key=lambda m: (m.best_date or "0000", m.size)) if fresh else None
@@ -95,8 +106,6 @@ def rank_cluster(members: list[Freshness]) -> tuple[str, list[str]]:
 
 
 # --- 簇类型学修正（2026-08-28 v1.1）：时序流 ≠ 版本簇 ---
-import re as _re
-_DATE_FULL = _re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
 
 def cluster_kind(members: list["Freshness"]) -> str:
     """判定簇性质：
@@ -106,8 +115,10 @@ def cluster_kind(members: list["Freshness"]) -> str:
     """
     dates = set()
     for m in members:
-        d = _DATE_FULL.search(Path(m.rel_path).name) or (m.best_date and _DATE_FULL.search(m.best_date))
-        if d: dates.add(d.group(0) if isinstance(d, str) else d.group(0))
+        d = DATE_FULL.search(Path(m.rel_path).name) or (
+            m.best_date and DATE_FULL.search(m.best_date))
+        if d:
+            dates.add(d.group(0))
     span_ok = len(dates) >= max(2, len(members) * 0.6)
     pathsets = {str(Path(m.rel_path).parent) for m in members}
     if span_ok and len(pathsets) <= 2:
