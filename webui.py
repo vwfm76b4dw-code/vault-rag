@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import os
 import socket
 import sys
 import threading
@@ -233,7 +234,7 @@ def api_settings_save(req: SettingsReq):
 
 @app.get("/api/providers")
 def api_providers_get():
-    return {"presets": lib.PROVIDER_PRESETS, "active": lib.active_provider()}
+    return {"profiles": lib.chat_profiles(), "active": lib.active_provider()}
 
 
 class ProviderReq(BaseModel):
@@ -253,10 +254,117 @@ def api_providers_switch(req: ProviderReq):
     return {"ok": True, "active": prof}
 
 
+@app.delete("/api/providers")
+def api_providers_delete(req: ProviderReq):
+    try:
+        return {"ok": True, **lib.delete_provider(req.name.strip())}
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
 @app.post("/api/chat/test")
 def api_chat_test():
     """当前供应商连通性测试（不计入对话）。"""
     return lib.test_provider()
+
+
+# ---------------- 检索 Embedding 设置 ----------------
+
+@app.get("/api/embed/config")
+def api_embed_config():
+    import search
+    st = lib.load_local_settings().get("embed", {})
+    return {
+        "backend": st.get("backend", os.environ.get("RAG_EMBED_BACKEND", "auto")),
+        "http_profiles": st.get("http_profiles") or [
+            {"name": "LM Studio", "url": "http://127.0.0.1:1234/v1/embeddings",
+             "model": "text-embedding-qwen3-embedding-0.6b"}],
+        "http_active": st.get("http_active", "LM Studio"),
+        "endpoint_alive": embed_endpoint_alive(),
+        "llama": __import__("embed_providers").llama_available(),
+        "ggufs": __import__("embed_providers").list_ggufs(),
+        "hf_presets": __import__("embed_providers").HF_PRESETS,
+        "dl": __import__("embed_providers").dl_status(),
+    }
+
+
+class EmbedConfigReq(BaseModel):
+    backend: str = ""
+    http_profiles: list = []
+    http_active: str = ""
+
+
+def _save_embed_config(patch: dict):
+    st = lib.load_local_settings()
+    merged = {**(st.get("embed") or {}), **patch}
+    lib.save_local_settings({"embed": merged})
+    import search
+    search._EMBED_PROBE["t"] = 0.0            # 让活性探测立即重估
+
+
+@app.post("/api/embed/config")
+def api_embed_config_save(req: EmbedConfigReq):
+    patch: dict = {}
+    if req.backend:
+        if req.backend not in ("auto", "http", "llamacpp", "off", "local"):
+            raise HTTPException(422, f"未知模式: {req.backend}")
+        patch["backend"] = req.backend
+    if req.http_profiles:
+        patch["http_profiles"] = req.http_profiles
+    if req.http_active:
+        patch["http_active"] = req.http_active
+    _save_embed_config(patch)
+    # HTTP 端点可配 → search 的 URL/模型也要跟着档案走
+    st = lib.load_local_settings().get("embed") or {}
+    profs = st.get("http_profiles") or []
+    act = next((p for p in profs if p.get("name") == st.get("http_active")), profs[0] if profs else None)
+    if act:
+        os.environ["RAG_EMBED_HTTP_URL"] = act.get("url", "")
+        os.environ["RAG_EMBED_HTTP_MODEL"] = act.get("model", "")
+        import search
+        search.EMBED_HTTP_URL = act.get("url", search.EMBED_HTTP_URL)
+        search.EMBED_HTTP_MODEL = act.get("model", search.EMBED_HTTP_MODEL)
+    return {"ok": True}
+
+
+class GgufSelectReq(BaseModel):
+    file: str
+
+
+@app.post("/api/embed/gguf/select")
+def api_embed_gguf_select(req: GgufSelectReq):
+    import embed_providers
+    if not (embed_providers.GGUF_DIR / req.file).exists():
+        raise HTTPException(404, f"文件不存在: {req.file}")
+    lib.save_local_settings({"llama_gguf": req.file})
+    return {"ok": True, "active": req.file}
+
+
+@app.get("/api/embed/hf/files")
+def api_embed_hf_files(repo: str, mirror: bool = True):
+    import embed_providers
+    try:
+        return {"ok": True, "files": embed_providers.hf_list_files(repo, mirror)}
+    except Exception as e:
+        raise HTTPException(502, f"拉取文件列表失败: {e}")
+
+
+class HfDownloadReq(BaseModel):
+    repo: str
+    file: str
+    mirror: bool = True
+
+
+@app.post("/api/embed/hf/download")
+def api_embed_hf_download(req: HfDownloadReq):
+    import embed_providers
+    return embed_providers.hf_download(req.repo, req.file, req.mirror)
+
+
+@app.get("/api/embed/hf/status")
+def api_embed_hf_status():
+    import embed_providers
+    return embed_providers.dl_status()
 
 
 # ---------------- 索引管理 ----------------
@@ -335,6 +443,23 @@ def embed_endpoint_alive() -> bool:
     return search.embed_endpoint_alive()
 
 
+def _apply_embed_settings():
+    """把持久化的 Embedding 配置应用到 search 模块（后端模式 / HTTP 端点档案）。"""
+    try:
+        import search
+        st = lib.load_local_settings().get("embed") or {}
+        if st.get("backend"):
+            search.EMBED_BACKEND = st["backend"]
+        profs = st.get("http_profiles") or []
+        act = next((p for p in profs if p.get("name") == st.get("http_active")),
+                   profs[0] if profs else None)
+        if act and act.get("url"):
+            search.EMBED_HTTP_URL = act["url"]
+            search.EMBED_HTTP_MODEL = act.get("model", search.EMBED_HTTP_MODEL)
+    except Exception as e:
+        print(f"[webui] 应用 Embedding 配置失败: {e}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description="vault-rag Web 控制台")
     ap.add_argument("--browser", action="store_true", help="用系统浏览器打开")
@@ -362,7 +487,8 @@ def main():
             if s.connect_ex((WEBUI_HOST, port)) == 0:
                 break
         time.sleep(0.1)
-    # 查询侧零模型加载（向量走 HTTP 端点）；本地 torch 仅在增量索引时按需加载
+    # 查询侧零模型加载（向量走 HTTP 端点/内置 llama.cpp）；torch 仅增量索引时按需加载
+    _apply_embed_settings()
 
     if args.server:
         print(f"[webui] 服务运行中 {url} （Ctrl+C 退出）")

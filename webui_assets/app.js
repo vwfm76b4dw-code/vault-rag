@@ -25,41 +25,123 @@ const $ = (id) => document.getElementById(id);
   }, { passive: true });
 })();
 
-/* ================= 快捷设置面板（cc-switch 式供应商切换） ================= */
+/* ================= 模型管理面板（cc-switch 式：生成 / 检索两页签） ================= */
+document.querySelectorAll(".mtab").forEach((t) => t.addEventListener("click", () => {
+  document.querySelectorAll(".mtab").forEach((x) => x.classList.remove("active"));
+  document.querySelectorAll(".mtab-panel").forEach((x) => x.classList.remove("active"));
+  t.classList.add("active");
+  $("mtab-" + t.dataset.mtab).classList.add("active");
+}));
+
+/* ---- 生成供应商：档案列表（预设+自定义，点击切换，可增删改） ---- */
 async function renderProviders() {
   const d = await api("/api/providers");
   const box = $("provider-list");
   box.innerHTML = "";
-  d.presets.forEach((p) => {
-    const active = p.url === d.active.url;
+  d.profiles.forEach((p) => {
+    const active = p.name === d.active.name;
     const row = document.createElement("div");
     row.className = "provider" + (active ? " active" : "");
     row.innerHTML =
       `<div class="p-body"><div class="p-name">${escapeHtml(p.name)}</div>` +
       `<div class="p-sub">${escapeHtml(p.url)} · ${escapeHtml(p.model)}</div></div>` +
-      (active ? `<span class="p-tag">● 使用中</span>` : `<span class="p-tag muted">切换</span>`);
-    row.addEventListener("click", async () => {
+      (active ? `<span class="p-tag">● 使用中</span>`
+              : `<span class="p-tag muted">切换</span>`) +
+      (p.custom ? `<button class="p-del" title="删除该档案">✕</button>` : ``);
+    row.addEventListener("click", async (e) => {
+      if (e.target.classList.contains("p-del")) return;
+      try { await post("/api/providers", { name: p.name }); renderProviders(); refreshStatus(); }
+      catch (err) { alert(err.message); }
+    });
+    const del = row.querySelector(".p-del");
+    if (del) del.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`删除档案「${p.name}」？`)) return;
       try {
-        await post("/api/providers", { name: p.name });
-        renderProviders();
-        refreshStatus();
-      } catch (e) { alert(e.message); }
+        await api("/api/providers", { method: "DELETE",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: p.name }) });
+        renderProviders(); refreshStatus();
+      } catch (err) { alert(err.message); }
     });
     box.appendChild(row);
   });
 }
 
+/* ---- 检索 Embedding 页签 ---- */
+let embedCfg = null;
+async function renderEmbed() {
+  embedCfg = await api("/api/embed/config");
+  document.querySelectorAll(`#embed-mode-row input`).forEach((r) => {
+    r.checked = r.value === embedCfg.backend;
+    r.onchange = async () => {
+      await post("/api/embed/config", { backend: r.value });
+      renderEmbed();
+    };
+  });
+  // HTTP 端点档案
+  const box = $("embed-profile-list");
+  box.innerHTML = "";
+  (embedCfg.http_profiles || []).forEach((p) => {
+    const active = p.name === embedCfg.http_active;
+    const row = document.createElement("div");
+    row.className = "provider" + (active ? " active" : "");
+    row.innerHTML =
+      `<div class="p-body"><div class="p-name">${escapeHtml(p.name)}${active ? ' <span class="p-tag">●</span>' : ""}</div>` +
+      `<div class="p-sub">${escapeHtml(p.url)} · ${escapeHtml(p.model)}</div></div>`;
+    row.addEventListener("click", async () => {
+      await post("/api/embed/config", { http_active: p.name });
+      renderEmbed();
+    });
+    box.appendChild(row);
+  });
+  // llama.cpp 状态
+  const L = embedCfg.llama;
+  $("llama-state").innerHTML = L.ready
+    ? `<span style="color:var(--ok)">✓ 就绪</span>`
+    : `<span style="color:var(--err)">✗ 未就绪（缺 ${!L.exe ? "llama-server.exe" : "GGUF 模型"}）</span>`;
+  $("llama-info").innerHTML =
+    `<div class="row"><span class="muted">服务端</span><span style="font-size:11px">${escapeHtml(L.exe || "未找到（放入 dist/llama/ 或设 RAG_LLAMA_EXE）")}</span></div>` +
+    `<div class="row"><span class="muted">模型</span><span style="font-size:11px">${escapeHtml(L.gguf || "未下载")}</span></div>`;
+  // GGUF 列表
+  const g = $("gguf-list");
+  g.innerHTML = "";
+  (embedCfg.ggufs || []).forEach((f) => {
+    const active = f.file === L.gguf;
+    const row = document.createElement("div");
+    row.className = "provider" + (active ? " active" : "");
+    row.innerHTML =
+      `<div class="p-body"><div class="p-name">${escapeHtml(f.file)}</div></div>` +
+      `<span class="p-tag muted">${f.size_mb} MB</span>` +
+      (active ? `<span class="p-tag">● 使用中</span>` : ``);
+    row.addEventListener("click", async () => {
+      await post("/api/embed/gguf/select", { file: f.file });
+      renderEmbed();
+    });
+    g.appendChild(row);
+  });
+  renderDl();
+}
+
+function renderDl() {
+  api("/api/embed/hf/status").then((s) => {
+    const fill = $("dl-fill"), txt = $("dl-status");
+    if (s.running) {
+      fill.style.width = (s.pct || 0) + "%";
+      txt.textContent = `下载中 ${s.pct}% · ${(s.downloaded / 1e6).toFixed(0)}/${((s.total || 0) / 1e6).toFixed(0)}MB · ${s.speed_mbs || 0}MB/s`;
+      setTimeout(renderDl, 800);
+    } else if (s.error) {
+      fill.style.width = "0%"; txt.textContent = "✗ " + s.error;
+    } else if (s.done) {
+      fill.style.width = "100%"; txt.textContent = "✓ 下载完成，模型已可选";
+      renderEmbed();
+    } else txt.textContent = "";
+  }).catch(() => {});
+}
+
 function openModal() {
   $("modal-backdrop").classList.add("open");
   renderProviders().catch(() => {});
-  api("/api/status").then((st) => {
-    $("modal-info").innerHTML =
-      `<div class="row"><span class="muted">检索向量（本地端点）</span><span>${st.embed_ready
-        ? `<span style="color:var(--ok)">✓ 在线 · 语义检索</span>`
-        : `<span style="color:var(--warn)">✗ 离线 · 关键词检索</span>`}</span></div>` +
-      `<div class="row"><span class="muted">检索端点</span><span style="font-size:11px">${escapeHtml(st.embed_url)}</span></div>`;
-  }).catch(() => {});
-  $("modal-key").focus();
+  renderEmbed().catch(() => {});
 }
 function closeModal() { $("modal-backdrop").classList.remove("open"); }
 $("btn-gear").addEventListener("click", openModal);
@@ -68,6 +150,17 @@ $("modal-backdrop").addEventListener("click", (e) => {
   if (e.target === $("modal-backdrop")) closeModal();
 });
 addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
+/* 新增/修改生成档案 */
+$("btn-np-save").addEventListener("click", async () => {
+  const name = $("np-name").value.trim(), url = $("np-url").value.trim(), model = $("np-model").value.trim();
+  if (!name || !url) { alert("名称与 URL 必填"); return; }
+  try {
+    await post("/api/providers", { name, url, model });
+    $("np-name").value = $("np-url").value = $("np-model").value = "";
+    renderProviders(); refreshStatus();
+  } catch (e) { alert(e.message); }
+});
 
 $("btn-provider-test").addEventListener("click", async () => {
   const el = $("provider-test-msg");
@@ -89,6 +182,41 @@ $("modal-key-save").addEventListener("click", async () => {
     setMsgAuto("modal-key-msg", r.key_set ? "✓ 已保存，现在可以直接提问了" : "保存失败", r.key_set, 6000);
     refreshStatus();
   } catch (e) { setMsg("modal-key-msg", e.message, false); }
+});
+
+/* Embedding 端点档案新增 */
+$("btn-ep-save").addEventListener("click", async () => {
+  const name = $("ep-name").value.trim(), url = $("ep-url").value.trim(), model = $("ep-model").value.trim();
+  if (!name || !url) { alert("名称与 URL 必填"); return; }
+  try {
+    const cfg = await api("/api/embed/config");
+    const profiles = (cfg.http_profiles || []).filter((p) => p.name !== name);
+    profiles.push({ name, url, model });
+    await post("/api/embed/config", { http_profiles: profiles, http_active: name });
+    renderEmbed();
+  } catch (e) { alert(e.message); }
+});
+
+/* HF GGUF 下载 */
+$("btn-hf-list").addEventListener("click", async () => {
+  const sel = $("hf-file");
+  sel.innerHTML = `<option>拉取中…</option>`;
+  try {
+    const r = await api(`/api/embed/hf/files?repo=${encodeURIComponent($("hf-repo").value.trim())}&mirror=${$("hf-mirror").checked}`);
+    sel.innerHTML = (r.files || []).map(
+      (f) => `<option value="${escapeHtml(f.file)}">${escapeHtml(f.file)}（${f.size_mb}MB）</option>`).join("");
+    if (!r.files?.length) sel.innerHTML = `<option>（无 GGUF 文件）</option>`;
+  } catch (e) { sel.innerHTML = `<option>✗ ${escapeHtml(e.message)}</option>`; }
+});
+$("btn-hf-download").addEventListener("click", async () => {
+  const file = $("hf-file").value;
+  if (!file || file.startsWith("✗") || file.startsWith("（")) { alert("先列出文件并选择"); return; }
+  try {
+    const r = await post("/api/embed/hf/download",
+      { repo: $("hf-repo").value.trim(), file, mirror: $("hf-mirror").checked });
+    if (!r.ok) alert(r.message);
+    renderDl();
+  } catch (e) { alert(e.message); }
 });
 
 /* ================= 通用 ================= */

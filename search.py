@@ -28,9 +28,9 @@ from config import API_URL as EMBED_HTTP_URL, MODEL as EMBED_HTTP_MODEL
 MAX_LEN = 512
 EXCLUDE_PATTERNS = ["%.codex/%"]   # 排除系统目录
 
-# 查询向量来源：'http'=HTTP 端点优先（不加载本地模型，默认）
-#               'local'=强制本地 torch；'auto'=端点失败退本地
-EMBED_BACKEND = os.environ.get("RAG_EMBED_BACKEND", "http")
+# 查询向量来源链（设置面板可选）：'auto'=HTTP端点→内置llama.cpp（默认）
+#   'http'=仅HTTP端点；'llamacpp'=仅内置llama.cpp；'off'=纯关键词；'local'=本地torch
+EMBED_BACKEND = os.environ.get("RAG_EMBED_BACKEND", "auto")
 EMBED_HTTP_TIMEOUT = float(os.environ.get("RAG_EMBED_HTTP_TIMEOUT", "5"))
 
 # 缓存上限（字节），超过则退化为每次现读。可用 RAG_VEC_CACHE_MB 调整（0=禁用）。
@@ -112,17 +112,29 @@ def embed_query_local(query: str) -> np.ndarray:
 
 
 def embed_query(query: str) -> np.ndarray:
-    """查询向量：默认 HTTP 端点；端点确认离线时零调用直接抛（调用方关键词兜底）。"""
-    if EMBED_BACKEND != "local":
-        if not embed_endpoint_alive():
-            raise EmbedUnavailable(f"embedding 端点 {EMBED_HTTP_URL} 离线")
+    """查询向量链（设置面板可选）：HTTP 端点 → 内置 llama.cpp → 无可用源时抛。
+
+    端点确认离线时零调用零等待；本地 torch 仅 RAG_EMBED_BACKEND=local 时使用。
+    """
+    if EMBED_BACKEND == "local":
+        return embed_query_local(query)
+    if EMBED_BACKEND in ("auto", "http") and embed_endpoint_alive():
         try:
             return embed_query_http(query)
         except Exception as e:
-            _EMBED_PROBE.update({"t": time.time(), "ok": False})   # 失败也进缓存
+            _EMBED_PROBE.update({"t": time.time(), "ok": False})
             if EMBED_BACKEND == "http":
                 raise EmbedUnavailable(f"embedding 端点调用失败（{type(e).__name__}）") from e
-    return embed_query_local(query)
+    if EMBED_BACKEND in ("auto", "llamacpp"):
+        try:
+            import embed_providers
+            return np.asarray(
+                embed_providers.embed_llamacpp(QUERY_INSTRUCTION + query),
+                dtype=np.float32)
+        except Exception as e:
+            if EMBED_BACKEND == "llamacpp":
+                raise EmbedUnavailable(f"内置 llama.cpp 失败: {e}") from e
+    raise EmbedUnavailable("无可用向量源（端点离线且未配置 llama.cpp）")
 
 
 def _db_stamp() -> tuple:

@@ -49,7 +49,7 @@ def chat_ready() -> bool:
     return bool(chat_api_key())
 
 
-# ---------- 供应商档案（cc-switch 式切换）----------
+# ---------- 供应商档案（cc-switch 式：预设 + 自定义增删改）----------
 
 PROVIDER_PRESETS = [
     {"name": "Agnes 国内", "url": "https://api.agnes-ai.cn/v1/chat/completions",
@@ -61,6 +61,11 @@ PROVIDER_PRESETS = [
 ]
 
 
+def chat_profiles() -> list[dict]:
+    custom = load_local_settings().get("chat_profiles") or []
+    return [dict(p) for p in PROVIDER_PRESETS] + [dict(c) for c in custom]
+
+
 def active_provider() -> dict:
     """当前生效的生成供应商（存 _local_settings.json，改完即时生效）。"""
     s = load_local_settings()
@@ -68,7 +73,7 @@ def active_provider() -> dict:
     if isinstance(cur, dict) and cur.get("url"):
         return {"name": str(cur.get("name", "自定义")),
                 "url": str(cur["url"]), "model": str(cur.get("model", ""))}
-    for p in PROVIDER_PRESETS:
+    for p in chat_profiles():
         if p["name"] == cur:
             return dict(p)
     return dict(PROVIDER_PRESETS[0])            # 默认国内站
@@ -76,18 +81,36 @@ def active_provider() -> dict:
 
 def switch_provider(name: str | None = None, url: str | None = None,
                     model: str | None = None) -> dict:
-    """按预设名切换，或写入自定义 url/model。返回生效档案。"""
-    if name:
-        for p in PROVIDER_PRESETS:
-            if p["name"] == name:
-                save_local_settings({"provider": dict(p)})
-                return dict(p)
-        raise ValueError(f"未知供应商: {name}")
-    if not url:
+    """按名切换；带 url 则新增/覆盖自定义档案。返回生效档案。"""
+    if url:
+        prof = {"name": name or "自定义", "url": url, "model": model or "", "custom": True}
+        s = load_local_settings()
+        profiles = [p for p in (s.get("chat_profiles") or []) if p.get("name") != prof["name"]]
+        profiles.append(prof)
+        save_local_settings({"chat_profiles": profiles})
+        save_local_settings({"provider": {"name": prof["name"], "url": prof["url"],
+                                          "model": prof["model"]}})
+        return prof
+    if not name:
         raise ValueError("需要 name 或 url")
-    prof = {"name": name or "自定义", "url": url, "model": model or ""}
-    save_local_settings({"provider": prof})
+    prof = next((p for p in chat_profiles() if p["name"] == name), None)
+    if prof is None:
+        raise ValueError(f"未知供应商: {name}")
+    save_local_settings({"provider": {"name": prof["name"], "url": prof["url"],
+                                      "model": prof["model"]}})
     return prof
+
+
+def delete_provider(name: str) -> dict:
+    """仅自定义档案可删；删当前生效的则回落默认。"""
+    s = load_local_settings()
+    profiles = [p for p in (s.get("chat_profiles") or []) if p.get("name") != name]
+    if len(profiles) == len(s.get("chat_profiles") or []):
+        raise ValueError(f"预设档案不可删除: {name}")
+    save_local_settings({"chat_profiles": profiles})
+    if (s.get("provider") or {}).get("name") == name:
+        save_local_settings({"provider": dict(PROVIDER_PRESETS[0])})
+    return {"deleted": name}
 
 
 # ---------- 聊天提示词组装（纯函数） ----------

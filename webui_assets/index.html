@@ -149,22 +149,74 @@
   </section>
 </main>
 
-<!-- 快捷设置面板（cc-switch 式供应商切换） -->
+<!-- 模型管理面板（cc-switch 式：生成 / 检索 两页签，档案可增删改切换） -->
 <div id="modal-backdrop" class="modal-backdrop">
   <div class="modal glass">
-    <div class="modal-head"><h3>⚙ 生成供应商</h3><button id="modal-close" title="关闭">✕</button></div>
-    <p class="muted small">回答生成走云端供应商，点击即切换（存本地 data/_local_settings.json）。</p>
-    <div id="provider-list" class="provider-list"></div>
-    <div class="row">
-      <button id="btn-provider-test">测试当前连通</button>
-      <span id="provider-test-msg" class="msg"></span>
+    <div class="modal-head"><h3>⚙ 模型管理</h3><button id="modal-close" title="关闭">✕</button></div>
+    <div class="modal-tabs">
+      <button class="mtab active" data-mtab="gen">生成供应商</button>
+      <button class="mtab" data-mtab="embed">检索 Embedding</button>
     </div>
-    <hr class="sep">
-    <p class="muted small">API key（Agnes 国内/国际站通用；本地 llama.cpp 无需 key）。</p>
-    <div class="row"><input id="modal-key" type="password" placeholder="sk-…（留空则不改）"></div>
-    <div class="row"><button id="modal-key-save" class="primary">保存 Key</button>
-      <span id="modal-key-msg" class="msg"></span></div>
-    <div id="modal-info" class="kv mt"></div>
+
+    <!-- 页签：生成 -->
+    <div class="mtab-panel active" id="mtab-gen">
+      <p class="muted small">回答生成走云端供应商，点击行切换；自定义档案可增删改。</p>
+      <div id="provider-list" class="provider-list"></div>
+      <details class="add-box">
+        <summary>＋ 新增 / 修改档案</summary>
+        <div class="row"><input id="np-name" placeholder="名称（同名即覆盖）"></div>
+        <div class="row"><input id="np-url" placeholder="端点 URL（…/v1/chat/completions）"></div>
+        <div class="row"><input id="np-model" placeholder="模型名（如 agnes-2.5-flash）"></div>
+        <div class="row"><button id="btn-np-save" class="primary">保存档案并启用</button></div>
+      </details>
+      <div class="row">
+        <button id="btn-provider-test">测试当前连通</button>
+        <span id="provider-test-msg" class="msg"></span>
+      </div>
+      <hr class="sep">
+      <p class="muted small">API key（Agnes 国内/国际站通用；本地 llama.cpp 无需 key）。</p>
+      <div class="row"><input id="modal-key" type="password" placeholder="sk-…（留空则不改）"></div>
+      <div class="row"><button id="modal-key-save" class="primary">保存 Key</button>
+        <span id="modal-key-msg" class="msg"></span></div>
+    </div>
+
+    <!-- 页签：检索 Embedding -->
+    <div class="mtab-panel" id="mtab-embed">
+      <p class="muted small">检索向量来源链：<b>HTTP 端点 → 内置 llama.cpp → 关键词</b>（离线自动降级，不阻塞检索）。</p>
+      <div class="row" id="embed-mode-row">
+        <label class="check"><input type="radio" name="embed-mode" value="auto"> 自动（推荐）</label>
+        <label class="check"><input type="radio" name="embed-mode" value="http"> 仅 HTTP 端点</label>
+        <label class="check"><input type="radio" name="embed-mode" value="llamacpp"> 仅内置 llama.cpp</label>
+        <label class="check"><input type="radio" name="embed-mode" value="off"> 纯关键词</label>
+      </div>
+      <div id="embed-status" class="kv"></div>
+
+      <h3 class="mt sub-h">HTTP 端点档案</h3>
+      <div id="embed-profile-list" class="provider-list"></div>
+      <details class="add-box">
+        <summary>＋ 新增 / 修改端点</summary>
+        <div class="row"><input id="ep-name" placeholder="名称（如 LM Studio）"></div>
+        <div class="row"><input id="ep-url" placeholder="URL（…/v1/embeddings）"></div>
+        <div class="row"><input id="ep-model" placeholder="模型名（如 text-embedding-qwen3-embedding-0.6b）"></div>
+        <div class="row"><button id="btn-ep-save" class="primary">保存端点并启用</button></div>
+      </details>
+
+      <h3 class="mt sub-h">内置 llama.cpp <span id="llama-state" class="muted small"></span></h3>
+      <div id="llama-info" class="kv"></div>
+      <div id="gguf-list" class="provider-list"></div>
+      <details class="add-box">
+        <summary>＋ 从 HuggingFace 下载 GGUF（hf-mirror 可选）</summary>
+        <div class="row"><input id="hf-repo" value="Qwen/Qwen3-Embedding-0.6B-GGUF" placeholder="仓库 id"></div>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="hf-mirror" checked> hf-mirror 镜像</label>
+          <button id="btn-hf-list">列出文件</button>
+        </div>
+        <div class="row"><select id="hf-file" class="sel"></select></div>
+        <div class="row"><button id="btn-hf-download" class="primary">下载到 models/gguf/</button></div>
+        <div class="dl-bar"><div id="dl-fill"></div></div>
+        <div id="dl-status" class="muted small"></div>
+      </details>
+    </div>
   </div>
 </div>
 <script src="/static/app.js"></script>

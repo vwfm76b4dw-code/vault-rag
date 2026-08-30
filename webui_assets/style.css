@@ -285,3 +285,22 @@ textarea:focus, input:focus { outline: none; border-color: var(--accent-line); }
   transition: color .18s, border-color .18s, background .18s;
 }
 #btn-gear:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
+
+/* 模态内页签 / 档案增删 / 下载进度 */
+.modal-tabs { display: flex; gap: 4px; margin: 10px 0 12px; border-bottom: 1px solid var(--line); padding-bottom: 0; }
+.mtab { border: none; background: none; color: var(--muted); padding: 7px 14px; cursor: pointer;
+  border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; font: inherit; }
+.mtab:hover { color: var(--fg); }
+.mtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.mtab-panel { display: none; }
+.mtab-panel.active { display: block; animation: fadein .15s ease; }
+.sub-h { font-size: 12.5px; color: var(--muted); margin-top: 16px; display: block; }
+.add-box { border: 1px dashed var(--line2); border-radius: 8px; padding: 8px 12px; margin: 10px 0; }
+.add-box summary { color: var(--muted); cursor: pointer; font-size: 12.5px; user-select: none; }
+.add-box[open] summary { color: var(--accent); margin-bottom: 6px; }
+.p-del { border: none; background: none; color: var(--muted); font-size: 12px; padding: 2px 6px; }
+.p-del:hover { color: var(--err); }
+.sel { width: 100%; background: rgba(0,0,0,.3); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 9px; font: inherit; }
+.dl-bar { height: 5px; background: rgba(255,255,255,.06); border-radius: 3px; margin: 8px 0 4px; overflow: hidden; }
+.dl-bar > div { height: 100%; width: 0; background: var(--accent); transition: width .5s; }
