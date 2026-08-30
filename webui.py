@@ -298,8 +298,9 @@ def main():
     ap.add_argument("--port", type=int, default=WEBUI_PORT)
     args = ap.parse_args()
 
-    # 打包态无控制台：stdout/stderr 落到 data/webui.log，报错有迹可循
-    if getattr(sys, "frozen", False) and not sys.stdout.isatty():
+    # 打包态无控制台：sys.stdout/stderr 可能为 None（双击启动时），日志落到 data/webui.log
+    if getattr(sys, "frozen", False) and (
+            sys.stdout is None or sys.stderr is None or not sys.stdout.isatty()):
         from config import DATA_DIR
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         log_f = open(DATA_DIR / "webui.log", "a", encoding="utf-8", buffering=1)
