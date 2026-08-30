@@ -43,10 +43,11 @@ body {
 .grain { position: fixed; inset: 0; z-index: -2; pointer-events: none; opacity: .05;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E"); }
 
-/* ---------- 鼠标跟随光斑 ---------- */
+/* ---------- 鼠标跟随光斑（中心严格对齐光标：left/top 归零 + 半宽 margin 抵消） ---------- */
 #cursor-glow {
   position: fixed; z-index: -1; pointer-events: none;
-  width: 520px; height: 520px; margin: -260px 0 0 -260px; left: 50%; top: 30%;
+  left: 0; top: 0;
+  width: 520px; height: 520px; margin: -260px 0 0 -260px;
   background: radial-gradient(circle, rgba(124,108,240,.14) 0%, rgba(34,211,238,.05) 38%, transparent 65%);
   transition: opacity .4s; will-change: transform;
 }
@@ -259,3 +260,33 @@ textarea:focus, input:focus { outline: none; border-color: var(--accent2); box-s
   transition: border .3s, box-shadow .3s;
 }
 .log.busy { color: #d7d9ec; border-color: rgba(124,108,240,.5); box-shadow: 0 0 18px rgba(124,108,240,.12) inset; }
+
+/* ---------- 快捷设置面板（模态） ---------- */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(5,5,10,.6); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.modal-backdrop.open { display: flex; animation: fadein .2s ease; }
+@keyframes fadein { from { opacity: 0; } }
+.modal {
+  width: min(520px, 92vw); padding: 20px 22px;
+  background: rgba(22,22,34,.92);
+  animation: pop .25s cubic-bezier(.2,.9,.3,1.2) both;
+}
+@keyframes pop { from { opacity: 0; transform: scale(.92) translateY(12px); } }
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.modal-head h3 { font-size: 14.5px; }
+.modal-head button { border: none; background: none; color: var(--muted); font-size: 16px; cursor: pointer; }
+.modal-head button:hover { color: var(--err); }
+.linklike { border: none; background: none; color: var(--cyan); cursor: pointer; font: inherit; padding: 0;
+  text-decoration: underline dotted; text-underline-offset: 3px; }
+.linklike:hover { color: #7dd3fc; }
+
+/* 头部齿轮按钮 */
+#btn-gear {
+  border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--muted);
+  border-radius: 10px; padding: 6px 10px; cursor: pointer; font-size: 15px;
+  transition: color .2s, border-color .2s, box-shadow .25s;
+}
+#btn-gear:hover { color: var(--accent); border-color: var(--accent2); box-shadow: 0 0 14px rgba(124,108,240,.3); }

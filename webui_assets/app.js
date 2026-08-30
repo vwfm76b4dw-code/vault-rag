@@ -25,6 +25,42 @@ const $ = (id) => document.getElementById(id);
   }, { passive: true });
 })();
 
+/* ================= 快捷设置面板 ================= */
+function openModal() {
+  $("modal-backdrop").classList.add("open");
+  api("/api/settings").then((cfg) => {
+    $("modal-info").innerHTML =
+      `<div class="row"><span class="muted">Key</span><span>${cfg.key_set ? "✓ 已配置" : "✗ 未配置"}</span></div>` +
+      `<div class="row"><span class="muted">生成模型（云端）</span><span>${escapeHtml(cfg.model)}</span></div>` +
+      `<div class="row"><span class="muted">生成端点</span><span style="font-size:11px;word-break:break-all">${escapeHtml(cfg.endpoint)}</span></div>` +
+      `<div class="row"><span class="muted">检索向量（本地端点）</span><span id="modal-embed" class="muted small">探测中…</span></div>`;
+    api("/api/status").then((st) => {
+      const el = $("modal-embed");
+      if (el) el.innerHTML = st.embed_ready
+        ? `<span style="color:var(--ok)">✓ 在线（语义检索）</span> ${escapeHtml(st.embed_url)}`
+        : `<span style="color:var(--warn)">✗ 离线 → 关键词检索</span> ${escapeHtml(st.embed_url)}`;
+    }).catch(() => {});
+  }).catch(() => {});
+  $("modal-key").focus();
+}
+function closeModal() { $("modal-backdrop").classList.remove("open"); }
+$("btn-gear").addEventListener("click", openModal);
+$("modal-close").addEventListener("click", closeModal);
+$("modal-backdrop").addEventListener("click", (e) => {
+  if (e.target === $("modal-backdrop")) closeModal();
+});
+addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+$("modal-key-save").addEventListener("click", async () => {
+  const v = $("modal-key").value.trim();
+  if (!v) { setMsgAuto("modal-key-msg", "输入为空，未保存", false); return; }
+  try {
+    const r = await post("/api/settings", { agnes_key: v });
+    $("modal-key").value = "";
+    setMsgAuto("modal-key-msg", r.key_set ? "✓ 已保存，现在可以直接提问了" : "保存失败", r.key_set, 6000);
+    refreshStatus();
+  } catch (e) { setMsg("modal-key-msg", e.message, false); }
+});
+
 /* ================= 通用 ================= */
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -204,7 +240,8 @@ async function sendChat(searchOnly) {
             renderSources(ev.results);
             bubble.innerHTML =
               `<span class="fallback-note">⚠ AI 生成不可用：${escapeHtml(ev.message)}<br>` +
-              `→ 在「管理器 → 设置」粘贴 Agnes key 即可启用回答；当前展示本地检索结果。</span>` +
+              `→ <button class="linklike" data-open-settings>打开设置面板粘贴 Key</button>` +
+              `（检索不受影响，当前展示本地检索结果）</span>` +
               md("以下为本地检索结果（右侧可打开原文）：");
           } else if (ev.type === "error") {
             bubble.innerHTML = md(acc || "") + `<span class="fallback-note">✗ 出错: ${escapeHtml(ev.message)}</span>`;
@@ -223,6 +260,9 @@ async function sendChat(searchOnly) {
 }
 $("btn-send").addEventListener("click", () => sendChat(false));
 $("btn-search-only").addEventListener("click", () => sendChat(true));
+$("chat-log").addEventListener("click", (e) => {
+  if (e.target.closest("[data-open-settings]")) openModal();
+});
 $("chat-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(false); }
 });

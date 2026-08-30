@@ -55,6 +55,7 @@ exe = EXE(
     upx=False,
     console=False,                     # 不弹控制台黑框
     disable_windowed_traceback=False,
+    icon="vault-rag.ico",              # 同款 LOGO 图标
 )
 
 coll = COLLECT(
