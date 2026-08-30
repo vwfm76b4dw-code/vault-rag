@@ -137,6 +137,8 @@ def stream_chat(messages: list[dict], temperature: float = 0.3):
             stream=True, timeout=(15, CHAT_TIMEOUT))
         if r.status_code != 200:
             raise ChatUnavailable(f"端点 HTTP {r.status_code}: {r.text[:120]}")
+        # SSE 不带 charset 时 requests 默认按 ISO-8859-1 解码，中文必乱码 → 强制 UTF-8
+        r.encoding = "utf-8"
         for line in r.iter_lines(decode_unicode=True):
             if not line or not line.startswith("data:"):
                 continue
@@ -193,24 +195,40 @@ def retrieve(query: str, top_k: int = 6) -> list[dict]:
     return hits
 
 
+def keyword_terms(query: str) -> list[str]:
+    """检索词切分：英文整词；中文长串切 2-gram（整句精确匹配基本命不中）。"""
+    toks = []
+    for run in re.findall(r"[一-鿿]{2,}|[A-Za-z0-9]{2,}", query):
+        if run[0].isascii():
+            toks.append(run.lower())
+        elif len(run) <= 2:
+            toks.append(run)
+        else:
+            toks += [run[i:i + 2] for i in range(len(run) - 1)]
+    return toks or ([query.strip()] if query.strip() else [])
+
+
 def keyword_fallback(query: str, top_k: int = 6) -> list[dict]:
-    """embedding 不可用时的关键词兜底（LIKE 命中计数排序）。"""
-    terms = [t for t in re.findall(r"[一-鿿]{2,}|[A-Za-z0-9]{2,}", query)]
+    """embedding 不可用时的关键词兜底（分词 LIKE 命中占比排序）。"""
+    terms = keyword_terms(query)
     if not terms:
         return []
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     try:
-        where = " AND ".join("text LIKE ?" for _ in terms)
+        # 命中任一切分词即入候选（OR），占比决定排序；限 200 行防全表扫
+        where = " OR ".join("text LIKE ?" for _ in terms[:16])
         rows = con.execute(
-            f"SELECT rel_path, section, text FROM chunks WHERE {where} LIMIT 200",
-            [f"%{t}%" for t in terms]).fetchall()
+            f"SELECT rel_path, section, text FROM chunks WHERE {where} LIMIT 400",
+            [f"%{t}%" for t in terms[:16]]).fetchall()
         scored = []
         for r in rows:
             t = r["text"]
+            sc = sum(1 for x in terms if x in t) / len(terms)
+            if sc <= 0:
+                continue
             scored.append({"rel_path": r["rel_path"], "section": r["section"] or "",
-                           "text": t, "score": sum(1 for x in terms if x in t) / len(terms),
-                           "superseded": False})
+                           "text": t, "score": sc, "superseded": False})
         scored.sort(key=lambda x: -x["score"])
         seen, out = set(), []
         for s in scored:

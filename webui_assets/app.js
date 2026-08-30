@@ -235,8 +235,10 @@ async function sendChat(searchOnly) {
       bubble.innerHTML = out.results.length
         ? md(`检索到 **${out.results.length}** 条相关内容（右侧来源，点击可打开原文）。`)
         : md("没有检索到相关内容。");
-      if (out.mode.startsWith("keyword"))
-        bubble.innerHTML += `<span class="fallback-note">⚠ ${escapeHtml(out.mode)}</span>`;
+      if (out.mode === "keyword") {
+        bubble.innerHTML += `<p class="mode-note">ℹ 当前为关键词检索 · 启动 LM Studio(1234) 后自动升级语义检索</p>`;
+      }
+      if (!out.results.length) bubble.innerHTML = md("没有检索到相关内容。");
     } else {
       const r = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -266,6 +268,9 @@ async function sendChat(searchOnly) {
           } else if (ev.type === "warning") {
             acc += `\n\n⚠ ${ev.message}`;
             bubble.innerHTML = md(acc);
+          } else if (ev.type === "info") {
+            bubble.innerHTML = md(acc || "") +
+              `<p class="mode-note">ℹ ${escapeHtml(ev.message)}</p>` + caret;
           } else if (ev.type === "fallback") {
             renderSources(ev.results);
             bubble.innerHTML =

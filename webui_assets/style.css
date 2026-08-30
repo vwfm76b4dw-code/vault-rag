@@ -136,6 +136,8 @@ code { background: rgba(255,255,255,.06); padding: 1px 6px; border-radius: 5px; 
 .bubble .muted { font-size: 12px; }
 .bubble .fallback-note { display: block; margin: 6px 0; padding: 8px 11px; border-radius: 8px;
   background: rgba(217,160,74,.07); border: 1px solid rgba(217,160,74,.22); color: var(--warn); font-size: 12.5px; }
+.bubble .mode-note { margin: 6px 0 2px; color: var(--muted); font-size: 12px;
+  border-top: 1px dashed var(--line); padding-top: 6px; }
 .stream-caret { display: inline-block; width: 7px; height: 15px; margin-left: 2px;
   background: var(--accent); border-radius: 2px; animation: blink .85s infinite; vertical-align: -2px; }
 @keyframes blink { 50% { opacity: 0; } }

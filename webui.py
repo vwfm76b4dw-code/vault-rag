@@ -89,9 +89,9 @@ def api_search(req: SearchReq):
         try:
             hits = lib.retrieve(req.q.strip(), top_k=req.k)
             mode = "semantic"
-        except Exception as e:                 # 模型未下载/端点故障 → 关键词兜底
+        except Exception:                    # 端点离线 → 关键词模式（静默，不算错误）
             hits = lib.keyword_fallback(req.q.strip(), top_k=req.k)
-            mode = "keyword（embedding 不可用: %s）" % type(e).__name__
+            mode = "keyword"
     return {"mode": mode, "results": [
         {"score": round(h["score"], 4), "rel_path": h["rel_path"],
          "section": h.get("section") or "", "text": h["text"][:300],
@@ -112,9 +112,9 @@ def api_chat(req: ChatReq):
         except Exception:
             with _EMBED_LOCK:
                 hits = lib.keyword_fallback(req.q.strip(), top_k=req.k)
-            yield _sse({"type": "warning",
-                        "message": "embedding 端点离线（LM Studio 1234 未启动）→ 已自动切换关键词检索，"
-                                   "启动 LM Studio 后恢复语义检索"})
+            # 非错误：端点没开就安静用关键词，不吓唬人
+            yield _sse({"type": "info",
+                        "message": "当前为关键词检索 · 启动 LM Studio(1234) 后自动升级语义检索"})
         yield _sse({"type": "sources", "results": [
             {"score": round(h["score"], 4), "rel_path": h["rel_path"],
              "section": h.get("section") or "", "superseded": h.get("superseded", False)}
@@ -326,25 +326,13 @@ def _free_port(host: str, port: int) -> int:
     raise SystemExit(f"端口 {port}~{port+9} 均被占用（RAG_WEBUI_PORT 可指定）")
 
 
-_EMBED_PROBE: dict = {"t": 0.0, "ok": False}
-# 查询侧零本地模型：检索向量走 HTTP 端点（LM Studio 1234），离线自动关键词兜底；
-# 本地 torch 只在"增量索引/新增内容"时由 indexer_qwen 加载。
+_EMBED_PROBE_LOCK = threading.Lock()
 
 
 def embed_endpoint_alive() -> bool:
-    """探测检索向量端点（结果缓存 8 秒，避免状态轮询打爆端点）。"""
-    if time.time() - _EMBED_PROBE["t"] < 8:
-        return _EMBED_PROBE["ok"]
-    import requests
-    ok = False
-    try:
-        from config import API_URL, MODEL
-        r = requests.post(API_URL, json={"model": MODEL, "input": ["alive"]}, timeout=2)
-        ok = r.status_code == 200
-    except Exception:
-        ok = False
-    _EMBED_PROBE.update({"t": time.time(), "ok": ok})
-    return ok
+    """探测检索向量端点（search.py 内缓存 8 秒，状态轮询不重复打端点）。"""
+    import search
+    return search.embed_endpoint_alive()
 
 
 def main():

@@ -149,5 +149,37 @@ class TestEmbedBackend(unittest.TestCase):
             srv.shutdown()
 
 
+class TestKeywordFallback(unittest.TestCase):
+    """关键词兜底：中文 2-gram 切分，整句短语也能部分命中。"""
+
+    def _db(self, td: Path):
+        import sqlite3
+        db = Path(td) / "q.db"
+        con = sqlite3.connect(db)
+        con.executescript("""
+            CREATE TABLE notes(rel_path TEXT PRIMARY KEY, mtime REAL, n_chunks INTEGER);
+            CREATE TABLE chunks(chunk_id INTEGER PRIMARY KEY, rel_path TEXT,
+                seq INTEGER, section TEXT, text TEXT);
+        """)
+        con.execute("INSERT INTO chunks VALUES(1,'知识/a.md',0,'','介绍 GitHub 优质项目与开源趋势')")
+        con.execute("INSERT INTO chunks VALUES(2,'知识/b.md',0,'','RAG 索引分块与向量存储实践')")
+        con.commit(); con.close()
+        return db
+
+    def test_bigram_matches_partial_phrase(self):
+        import webui_lib
+        with tempfile.TemporaryDirectory() as td:
+            orig = webui_lib.DB_PATH
+            webui_lib.DB_PATH = self._db(Path(td))
+            try:
+                out = webui_lib.keyword_fallback("github优质项目有哪些", top_k=3)
+                self.assertGreater(len(out), 0)              # 旧版整句 LIKE 为空
+                self.assertEqual(out[0]["rel_path"], "知识/a.md")
+                out2 = webui_lib.keyword_fallback("完全无关的查询词组xyz", top_k=3)
+                self.assertIsInstance(out2, list)
+            finally:
+                webui_lib.DB_PATH = orig
+
+
 if __name__ == "__main__":
     unittest.main()

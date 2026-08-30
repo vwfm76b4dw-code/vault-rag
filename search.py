@@ -18,6 +18,7 @@ os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 import sqlite3
 import sys
+import time
 
 import numpy as np
 
@@ -42,6 +43,24 @@ _TOKENIZER = None
 
 class EmbedUnavailable(Exception):
     """查询向量不可得（HTTP 端点离线且未启用本地回退）→ 调用方走关键词检索。"""
+
+
+_EMBED_PROBE: dict = {"t": 0.0, "ok": False}
+
+
+def embed_endpoint_alive(force: bool = False) -> bool:
+    """端点活性探测（缓存 8 秒）：离线期间检索零网络调用、零等待。"""
+    if not force and time.time() - _EMBED_PROBE["t"] < 8:
+        return _EMBED_PROBE["ok"]
+    import requests
+    try:
+        r = requests.post(EMBED_HTTP_URL, json={"model": EMBED_HTTP_MODEL, "input": ["alive"]},
+                          timeout=(1.5, 2.5))
+        ok = r.status_code == 200
+    except Exception:
+        ok = False
+    _EMBED_PROBE.update({"t": time.time(), "ok": ok})
+    return ok
 
 
 def embed_query_http(query: str) -> np.ndarray:
@@ -93,14 +112,16 @@ def embed_query_local(query: str) -> np.ndarray:
 
 
 def embed_query(query: str) -> np.ndarray:
-    """查询向量：默认 HTTP 端点（本地零模型加载）；端点失败按 backend 策略处理。"""
+    """查询向量：默认 HTTP 端点；端点确认离线时零调用直接抛（调用方关键词兜底）。"""
     if EMBED_BACKEND != "local":
+        if not embed_endpoint_alive():
+            raise EmbedUnavailable(f"embedding 端点 {EMBED_HTTP_URL} 离线")
         try:
             return embed_query_http(query)
         except Exception as e:
+            _EMBED_PROBE.update({"t": time.time(), "ok": False})   # 失败也进缓存
             if EMBED_BACKEND == "http":
-                raise EmbedUnavailable(
-                    f"embedding 端点 {EMBED_HTTP_URL} 不可用（{type(e).__name__}）") from e
+                raise EmbedUnavailable(f"embedding 端点调用失败（{type(e).__name__}）") from e
     return embed_query_local(query)
 
 
