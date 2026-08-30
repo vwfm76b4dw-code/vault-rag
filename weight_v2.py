@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import DATA_DIR, VAULT, FTS_DB
+from config import DATA_DIR, VAULT, FTS_DB, SUBPROCESS_FLAGS
 import scope as scopes
 
 WDB = DATA_DIR / "weights.db"
@@ -105,7 +105,8 @@ def ai_eval_batch(texts_labels, backend="claude"):
             env = {**os.environ, "CLAUDE_CODE_ENTRYPOINT": "weight-v2"}   # 标记来源，防钩子递归
             r = subprocess.run([node, str(wrapper), "-p", prompt],
                                capture_output=True, text=True, timeout=420,
-                               encoding="utf-8", env=env)
+                               encoding="utf-8", env=env,
+                               creationflags=SUBPROCESS_FLAGS)
             out = r.stdout
         else:  # agnes openai-compatible
             import requests

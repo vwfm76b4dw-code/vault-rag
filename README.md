@@ -113,6 +113,27 @@ pip install -r requirements.txt   # torch 建议装 CPU 版即可
 python -m unittest discover -s tests -v
 ```
 
+## Web 控制台
+
+```bash
+python webui.py            # 桌面窗口（pywebview / Edge WebView2）
+python webui.py --browser  # 浏览器打开
+python webui.py --server   # 只起服务（远程/调试），默认 http://127.0.0.1:8765
+```
+
+三个页面：
+
+- **问答** — 语义检索 + Agnes 生成回答（流式，标注 [n] 引用来源，点击来源打开原文；
+  被时效引擎裁决取代的文档自动警示）。Agnes key 在管理器页设置（存 `data/_local_settings.json`，
+  已 gitignore）或环境变量 `AGNES_API_KEY`。无 key / 端点故障自动降级为纯检索；
+  embedding 模型不可用再降级关键词兜底。生成端点 OpenAI 兼容，可用
+  `RAG_CHAT_API_URL`/`RAG_CHAT_MODEL` 指向 llama.cpp server 等本地后端
+- **看板** — 笔记/块/向量/待索引/缓存计数、领域分布、关系图边统计、权重榜、最近索引
+- **管理器** — include.txt 编辑保存（语法校验）、添加外部 @ 文件、新建笔记（自动 frontmatter）、
+  触发增量索引（实时日志）
+
+torch 编码线程数默认 10（`RAG_TORCH_THREADS` 可调）；Windows 下所有子进程不弹控制台黑框。
+
 ## MCP 集成：rag-obsidian
 
 可与现有 Obsidian FTS 服务器深度融合为 32 工具统一服务：

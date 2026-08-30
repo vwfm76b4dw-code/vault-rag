@@ -20,7 +20,7 @@ from mcp.server.fastmcp import FastMCP
 # 让 rag_mcp 能 import 同目录的 config/search
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import DB_PATH, DIM, MODEL_NAME_QWEN
+from config import DB_PATH, DIM, MODEL_NAME_QWEN, TORCH_THREADS
 
 mcp = FastMCP("vault-rag")
 
@@ -42,7 +42,7 @@ def _ensure_model():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_QWEN, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    torch.set_num_threads(max(8, os.cpu_count() - 2))
+    torch.set_num_threads(TORCH_THREADS)
     _MODEL_CACHE["model"] = model
     _MODEL_CACHE["tokenizer"] = tokenizer
     print(f"[vault-rag] model ready in {time.time()-t0:.0f}s", file=sys.stderr, flush=True)

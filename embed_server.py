@@ -11,6 +11,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+from config import SUBPROCESS_FLAGS
+
 def embed(texts: list[str], model: str, ctx_size: int = 512) -> list[list[float]]:
     """调用 llama-embedding.exe 生成向量。exe 路径经 LLAMA_EMBED_EXE 覆盖。"""
     exe = os.environ.get("LLAMA_EMBED_EXE", r"D:\llama.cpp\build\bin\llama-embedding.exe")
@@ -26,7 +29,8 @@ def embed(texts: list[str], model: str, ctx_size: int = 512) -> list[list[float]
         "--verbose",
     ]
     try:
-        r = subprocess.run(cmd, input=input_text, capture_output=True, text=True, timeout=300)
+        r = subprocess.run(cmd, input=input_text, capture_output=True, text=True,
+                           timeout=300, creationflags=SUBPROCESS_FLAGS)
         if r.returncode != 0:
             raise RuntimeError(f"llama-embedding 失败: {r.stderr[:200]}")
         # 解析 JSON 输出

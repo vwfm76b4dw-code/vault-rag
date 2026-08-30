@@ -24,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-from config import DATA_DIR, DB_PATH
+from config import DATA_DIR, DB_PATH, TORCH_THREADS
 from chunker import chunk_note
 import scope as scopes
 
@@ -49,7 +49,7 @@ def load_model():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     if tokenizer.pad_token is None:                      # 修复6：防御性 pad_token
         tokenizer.pad_token = tokenizer.eos_token
-    torch.set_num_threads(min(10, os.cpu_count()))    # 明确线程数，避免争抢
+    torch.set_num_threads(min(TORCH_THREADS, os.cpu_count() or TORCH_THREADS))    # 默认 10 线程，过高易崩
     print("加载完成", flush=True)
     _MODEL, _TOKENIZER = model, tokenizer
     return model, tokenizer
@@ -88,6 +88,7 @@ def init_db(con: sqlite3.Connection):
         CREATE TABLE IF NOT EXISTS embed_cache(
             h TEXT PRIMARY KEY,
             vec BLOB NOT NULL);
+        CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
     """)
     con.commit()
 
@@ -261,6 +262,11 @@ def index(max_files: int = 0):
             "SELECT COUNT(*) FROM chunks c JOIN blob_vectors b ON b.chunk_id=c.chunk_id"
         ).fetchone()[0]
         ok = paired == total_c == total_b
+        con.execute("INSERT OR REPLACE INTO meta VALUES('indexed_at', ?)",
+                    (time.strftime("%Y-%m-%d %H:%M:%S"),))
+        con.execute("INSERT OR REPLACE INTO meta VALUES('consistent', ?)",
+                    ("1" if ok else "0",))
+        con.commit()
         print(f"\n[done] {con.execute('SELECT COUNT(*) FROM notes').fetchone()[0]} 篇，"
               f"{total_c} 块，文本-向量配对 {paired}/{total_b} "
               f"{'✓ 一致' if ok else '✗ 不一致!'}"

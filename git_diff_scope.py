@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import scope as scopes
-from config import VAULT
+from config import VAULT, SUBPROCESS_FLAGS
 
 BASE_TAG = "rag-baseline"
 REPO = Path(__file__).parent / ".ragfiles"
@@ -24,7 +24,8 @@ REPO = Path(__file__).parent / ".ragfiles"
 def _git_in(repo, *args) -> str:
     if not Path(repo).exists():
         return ""
-    r = subprocess.run(["git", *args], cwd=str(repo), capture_output=True)
+    r = subprocess.run(["git", *args], cwd=str(repo), capture_output=True,
+                       creationflags=SUBPROCESS_FLAGS)
     return r.stdout.decode("utf-8", "replace")
 
 
@@ -44,10 +45,12 @@ def _init_and_commit(repo: Path) -> int:
     """建立快照仓库（若未初始化）并提交全量 manifest，打下一个基线 tag。"""
     repo.mkdir(parents=True, exist_ok=True)
     if not (repo / ".git").exists():
-        subprocess.run(["git", "init", "-q"], cwd=str(repo), capture_output=True)
+        subprocess.run(["git", "init", "-q"], cwd=str(repo), capture_output=True,
+                       creationflags=SUBPROCESS_FLAGS)
 
     def run(*a):
-        subprocess.run(["git", *a], cwd=str(repo), capture_output=True, text=True)
+        subprocess.run(["git", *a], cwd=str(repo), capture_output=True, text=True,
+                       creationflags=SUBPROCESS_FLAGS)
 
     snap = snapshot_files()
     manifest = "\n".join(f"{k}\t{v[1]:.3f}" for k, v in sorted(snap.items()))
@@ -56,9 +59,10 @@ def _init_and_commit(repo: Path) -> int:
     n = len(snap)
     subprocess.run(["git", "-c", "user.name=rag", "-c", "user.email=rag@local",
                     "commit", "-q", "-m", f"baseline: {n} files"],
-                   cwd=str(repo), capture_output=True)
+                   cwd=str(repo), capture_output=True, creationflags=SUBPROCESS_FLAGS)
     idx = len(_git_in(repo, "tag", "-l", BASE_TAG + "*").split())
-    subprocess.run(["git", "tag", f"{BASE_TAG}-{idx+1}"], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "tag", f"{BASE_TAG}-{idx+1}"], cwd=str(repo),
+                   capture_output=True, creationflags=SUBPROCESS_FLAGS)
     return idx + 1
 
 

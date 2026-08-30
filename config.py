@@ -48,6 +48,26 @@ SKIP_DIRS = {".obsidian", ".trash", ".git", ".codex"}
 FTS_DB = Path(os.environ.get(
     "RAG_FTS_DB", str(Path.home() / ".claude/mcp_servers/obsidian-search/vault_new.db")))
 
+# ---- 线程与子进程 ----
+# torch 编码线程数：默认 10（过高在部分机器上会引发崩溃，见 README 踩坑清单）
+TORCH_THREADS = int(os.environ.get("RAG_TORCH_THREADS", "10"))
+# Windows 子进程统一不弹控制台黑框（DETACHED/无父控制台的子进程会自建 console）
+CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+SUBPROCESS_FLAGS = CREATE_NO_WINDOW
+
+# ---- 问答生成（OpenAI 兼容；默认 Agnes，也可指向 llama.cpp server 等本地端点）----
+CHAT_API_URL = os.environ.get(
+    "RAG_CHAT_API_URL", "https://apihub.agnes-ai.com/v1/chat/completions")
+CHAT_MODEL = os.environ.get("RAG_CHAT_MODEL", "agnes-2.5-flash")
+CHAT_API_KEY_ENVS = ("AGNES_API_KEY", "AGNES_KEY")
+CHAT_TIMEOUT = int(os.environ.get("RAG_CHAT_TIMEOUT", "120"))
+# 本地密钥文件（gitignored）：{"agnes_key": "sk-..."}，可在 Web 控制台管理页设置
+LOCAL_SETTINGS_PATH = DATA_DIR / "_local_settings.json"
+
+# ---- Web 控制台 ----
+WEBUI_HOST = os.environ.get("RAG_WEBUI_HOST", "127.0.0.1")
+WEBUI_PORT = int(os.environ.get("RAG_WEBUI_PORT", "8765"))
+
 # ---- 多模态（VL）配置 ----
 MODEL_NAME_VL = "models/Qwen3-VL-Embedding-2B"     # 本地目录（下载完成后）
 VL_DIM_MAX = 2048                                  # MRL 最大输出维

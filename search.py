@@ -21,7 +21,7 @@ import sys
 
 import numpy as np
 
-from config import DB_PATH, MODEL_NAME_QWEN, DIM, TOP_K, QUERY_INSTRUCTION
+from config import DB_PATH, MODEL_NAME_QWEN, DIM, TOP_K, QUERY_INSTRUCTION, TORCH_THREADS
 
 MAX_LEN = 512
 EXCLUDE_PATTERNS = ["%.codex/%"]   # 排除系统目录
@@ -46,7 +46,7 @@ def load_model():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_QWEN, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    torch.set_num_threads(min(10, os.cpu_count()))
+    torch.set_num_threads(min(TORCH_THREADS, os.cpu_count() or TORCH_THREADS))
     _MODEL, _TOKENIZER = model, tokenizer
     return model, tokenizer
 

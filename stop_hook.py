@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE))
+from config import CREATE_NO_WINDOW
 VAULT = Path(os.environ.get("VAULT_PATH", str(Path.home() / "Documents" / "Obsidian Vault")))
 SIGNAL = BASE / "data" / ".last_index_signal"
 LOG = BASE / "data" / "index_auto.log"
@@ -115,7 +117,8 @@ def main() -> int:
     # 成熟模式 1：DETACHED 派生真实索引，主进程立刻返回不阻塞会话退出
     flags = 0
     if os.name == "nt":
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                 | CREATE_NO_WINDOW)
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
     child = subprocess.Popen(
         [sys.executable, str(BASE / "run_index.py")],

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vault-rag 控制台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">◈</span>
+    <span class="title">vault-rag <em>控制台</em></span>
+  </div>
+  <nav>
+    <button class="tab active" data-tab="chat">问答</button>
+    <button class="tab" data-tab="board">看板</button>
+    <button class="tab" data-tab="manage">管理器</button>
+  </nav>
+  <div class="status-pill" id="status-pill" title="加载中…"><span class="dot"></span><span id="status-text">连接中</span></div>
+</header>
+
+<main>
+  <!-- ============ 问答 ============ -->
+  <section id="tab-chat" class="panel active">
+    <div class="chat-wrap">
+      <div id="chat-log" class="chat-log">
+        <div class="msg assistant"><div class="bubble">
+          问点什么吧 — 检索本地知识库后由 AI 生成回答，来源可追溯。<br>
+          <small>纯检索（不生成）可用下方「仅检索」；AI 回答需要 Agnes key（管理器 → 设置）。</small>
+        </div></div>
+      </div>
+      <div class="chat-input-row">
+        <textarea id="chat-input" rows="2" placeholder="例如：agent 怎么防遗忘？  （Enter 发送 / Shift+Enter 换行）"></textarea>
+        <div class="chat-actions">
+          <button id="btn-send" class="primary">发送</button>
+          <button id="btn-search-only">仅检索</button>
+        </div>
+      </div>
+    </div>
+    <aside id="sources-panel" class="sources-panel">
+      <h3>来源 <span id="sources-count" class="muted"></span></h3>
+      <div id="sources-list" class="muted">回答后显示引用来源</div>
+    </aside>
+  </section>
+
+  <!-- ============ 看板 ============ -->
+  <section id="tab-board" class="panel">
+    <div class="cards" id="cards"></div>
+    <div class="board-grid">
+      <div class="board-card">
+        <h3>领域分布</h3>
+        <div id="domains" class="bars"></div>
+      </div>
+      <div class="board-card">
+        <h3>知识关系图 <span class="muted" id="edges-hint"></span></h3>
+        <div id="edges" class="kv"></div>
+        <h3 class="mt">权重榜 Top 8 <span class="muted" id="weights-hint"></span></h3>
+        <div id="weights" class="kv"></div>
+      </div>
+      <div class="board-card">
+        <h3>最近索引的笔记</h3>
+        <div id="recent" class="list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 管理器 ============ -->
+  <section id="tab-manage" class="panel">
+    <div class="manage-grid">
+      <div class="board-card">
+        <h3>索引范围 include.txt</h3>
+        <textarea id="scope-text" class="code" rows="16" spellcheck="false"></textarea>
+        <div class="row">
+          <button id="btn-scope-save" class="primary">保存</button>
+          <span id="scope-msg" class="msg"></span>
+        </div>
+      </div>
+      <div class="board-card">
+        <h3>添加外部文件（@ 规则）</h3>
+        <div class="row"><input id="ext-path" placeholder="C:\path\to\file.md 绝对路径">
+          <button id="btn-browse">浏览…</button></div>
+        <div class="row"><input id="ext-alias" placeholder="别名（可选，如 external/AI手册.md）"></div>
+        <div class="row"><button id="btn-ext-add">加入范围</button>
+          <span id="ext-msg" class="msg"></span></div>
+
+        <h3 class="mt">新建笔记</h3>
+        <div class="row"><input id="note-path" placeholder="知识/主题/新笔记.md"></div>
+        <textarea id="note-content" rows="5" placeholder="初始内容（可空，自动加 frontmatter）"></textarea>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="note-overwrite"> 允许覆盖同名</label>
+          <button id="btn-note-create" class="primary">创建并索引</button>
+          <span id="note-msg" class="msg"></span>
+        </div>
+
+        <h3 class="mt">增量索引</h3>
+        <div class="row">
+          <button id="btn-index" class="primary">开始增量索引</button>
+          <span id="index-state" class="muted"></span>
+        </div>
+        <pre id="index-log" class="log">（空闲）</pre>
+      </div>
+      <div class="board-card">
+        <h3>设置</h3>
+        <p class="muted small">AI 问答的 API key（OpenAI 兼容端点）。保存到本地
+          <code>data/_local_settings.json</code>（已被 gitignore，不入库）。</p>
+        <div class="row"><input id="key-input" type="password" placeholder="sk-…（留空则不改）"></div>
+        <div class="row"><button id="btn-key-save" class="primary">保存 Key</button>
+          <span id="key-msg" class="msg"></span></div>
+        <div id="endpoint-info" class="kv mt"></div>
+        <p class="muted small">也支持本地端点：设 <code>RAG_CHAT_API_URL</code> 指向
+          llama.cpp server 的 <code>/v1/chat/completions</code>、<code>RAG_CHAT_MODEL</code> 指向模型即可。</p>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

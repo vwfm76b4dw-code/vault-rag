@@ -13,6 +13,8 @@ import sys
 import time
 from pathlib import Path
 
+from config import SUBPROCESS_FLAGS
+
 BASE = Path(__file__).resolve().parent
 LOG = BASE / "data" / "index_log_qwen.txt"
 ERR = BASE / "data" / "index_err.txt"
@@ -31,6 +33,7 @@ def main() -> int:
             p = subprocess.Popen(
                 [sys.executable, str(BASE / "indexer_qwen.py")],
                 stdout=out, stderr=err, cwd=str(BASE),
+                creationflags=SUBPROCESS_FLAGS,     # 无父控制台时不弹黑框
                 env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"})
             code = p.wait()
             out.write(f"===== index exit {code} =====\n")
