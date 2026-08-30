@@ -20,7 +20,7 @@ import threading
 import time
 from pathlib import Path
 
-from config import BASE_DIR, DATA_DIR
+from vault_rag.config import BASE_DIR, DATA_DIR, SUBPROCESS_FLAGS
 
 REPO = Path(__file__).resolve().parent
 GGUF_DIR = DATA_DIR / "gguf"          # 跟随数据目录：exe 经 data_dir.txt 指针共用
@@ -60,7 +60,7 @@ def list_ggufs() -> list[dict]:
 
 def resolve_gguf() -> Path | None:
     """GGUF 探测链：环境变量 > 设置面板选定 > models/gguf 最新一个。"""
-    import webui_lib
+    from vault_rag import webui_lib
     chosen = webui_lib.load_local_settings().get("llama_gguf")
     if chosen and (GGUF_DIR / chosen).exists():
         return GGUF_DIR / chosen
@@ -130,7 +130,7 @@ def ensure_server(start_timeout: float = 90.0) -> int:
         raise RuntimeError(f"{exe.name} 不是 llama-server（新版官方构建用 llama-server --embedding）")
     GGUF_DIR.mkdir(parents=True, exist_ok=True)
     log = open(GGUF_DIR / "llama_server.log", "a", encoding="utf-8")
-    flags = __import__("config").SUBPROCESS_FLAGS
+    flags = SUBPROCESS_FLAGS
     proc = subprocess.Popen(
         [str(exe), "-m", str(gguf), "--embedding", "--host", "127.0.0.1",
          "--port", str(LLAMA_PORT)],

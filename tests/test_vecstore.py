@@ -53,7 +53,7 @@ def build_db(db_path: Path, n_chunks: int = 10, delete_ids: tuple = (3, 4, 5)):
 
 class TestFetchRowsAlignment(unittest.TestCase):
     def setUp(self):
-        import search
+        from vault_rag import search
         self.search = search
         self._orig = (search.DB_PATH, search.embed_query)
         self._tmp = tempfile.TemporaryDirectory()
@@ -106,7 +106,7 @@ class TestReconcile(unittest.TestCase):
     """indexer_qwen.reconcile：孤向量删、缺向量 chunk 连同笔记回滚。"""
 
     def test_reconcile_removes_orphans_and_rolls_back(self):
-        import indexer_qwen
+        from vault_rag import indexer_qwen
         with tempfile.TemporaryDirectory() as td:
             db = Path(td) / "q.db"
             con = sqlite3.connect(db)

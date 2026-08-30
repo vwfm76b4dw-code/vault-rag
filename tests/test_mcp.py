@@ -16,8 +16,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 try:
-    import rag_mcp  # noqa: F401
-    import search
+    from vault_rag import rag_mcp as rag_mcp  # noqa: F401
+    from vault_rag import search
     HAVE_MCP = True
 except ImportError:
     HAVE_MCP = False
@@ -28,7 +28,7 @@ DIM = 8
 @unittest.skipUnless(HAVE_MCP, "mcp 未安装，跳过 rag_mcp 测试")
 class TestHybridSearch(unittest.TestCase):
     def setUp(self):
-        import rag_mcp
+        from vault_rag import rag_mcp as rag_mcp
         self.rag_mcp = rag_mcp
         self.search = search
         # 保存原值，tearDown 恢复，防止桩泄漏到其他测试

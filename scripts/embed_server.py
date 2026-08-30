@@ -11,8 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from config import SUBPROCESS_FLAGS
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from vault_rag.config import SUBPROCESS_FLAGS
 
 def embed(texts: list[str], model: str, ctx_size: int = 512) -> list[list[float]]:
     """调用 llama-embedding.exe 生成向量。exe 路径经 LLAMA_EMBED_EXE 覆盖。"""

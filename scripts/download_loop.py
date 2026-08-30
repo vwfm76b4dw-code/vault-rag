@@ -3,8 +3,8 @@
 import subprocess, sys, time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from config import SUBPROCESS_FLAGS
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from vault_rag.config import SUBPROCESS_FLAGS
 
 for attempt in range(1, 40):
     r = subprocess.run([sys.executable, "download_awq.py"], cwd=str(Path(__file__).parent),

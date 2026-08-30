@@ -12,10 +12,10 @@
 import re, sqlite3, sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from config import DATA_DIR, DB_PATH, FTS_DB
-from freshness import VAULT, extract_signals, rank_cluster, cluster_of, cluster_kind
-import scope as scopes
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from vault_rag.config import DATA_DIR, DB_PATH, FTS_DB
+from vault_rag.freshness import VAULT, extract_signals, rank_cluster, cluster_of, cluster_kind
+from vault_rag import scope as scopes
 
 DB = DATA_DIR / "relations.db"
 

@@ -16,10 +16,10 @@ from pathlib import Path
 
 import requests
 
-from config import (CHAT_API_KEY_ENVS, CHAT_API_URL, CHAT_MODEL, CHAT_TIMEOUT,
+from vault_rag.config import (CHAT_API_KEY_ENVS, CHAT_API_URL, CHAT_MODEL, CHAT_TIMEOUT,
                     DB_PATH, DATA_DIR, FTS_DB, LOCAL_SETTINGS_PATH, RELATIONS_DB,
                     VAULT, WEIGHTS_DB)
-import scope as scopes
+from vault_rag import scope as scopes
 
 # ---------- 本地设置（key 等敏感项，gitignored） ----------
 
@@ -210,7 +210,7 @@ def test_provider(timeout: float = 15.0) -> dict:
 
 def retrieve(query: str, top_k: int = 6) -> list[dict]:
     """语义检索 + 被取代标记。embedding 模型不可用时抛异常由调用方处理。"""
-    from search import search as _search
+    from vault_rag.search import search as _search
     hits = _search(query, top_k=top_k)
     superseded = superseded_paths()
     for h in hits:

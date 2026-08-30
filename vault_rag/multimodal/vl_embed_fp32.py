@@ -6,7 +6,7 @@ os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import torch
 torch.set_num_threads(10)
-from vl_embedder import Qwen3VLEmbedder
+from vault_rag.multimodal.vl_embedder import Qwen3VLEmbedder
 
 def load_vl():
     return Qwen3VLEmbedder(model_name_or_path="models/Qwen3-VL-Embedding-2B",

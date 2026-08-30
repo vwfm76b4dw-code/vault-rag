@@ -14,7 +14,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from config import VAULT, BASE_DIR
+from vault_rag.config import VAULT, BASE_DIR
 
 INCLUDE_PATH = Path(os.environ["RAG_INCLUDE"]) if os.getenv("RAG_INCLUDE") \
     else BASE_DIR / "include.txt"

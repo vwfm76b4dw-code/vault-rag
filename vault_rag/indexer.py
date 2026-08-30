@@ -20,11 +20,11 @@ from pathlib import Path
 import numpy as np
 import requests
 
-from config import (VAULT, DATA_DIR, LEGACY_DB_PATH as DB_PATH,
+from vault_rag.config import (VAULT, DATA_DIR, LEGACY_DB_PATH as DB_PATH,
                     LEGACY_VEC_PATH as VEC_PATH, API_URL, MODEL, DIM,
                     REQUEST_TIMEOUT, MAX_RETRIES, RETRY_BACKOFF,
                     P0_DIRS, SKIP_DIRS, ALIVE_PROBE_TIMEOUT)
-from chunker import chunk_note
+from vault_rag.chunker import chunk_note
 
 SAVE_EVERY = 3        # 每处理这么多篇笔记落盘一次向量（Qwen3 慢，缩短周期防丢数据）
 BATCH_CHARS = 8000      # 单请求字符预算（Qwen 慢，用小批量加快落盘频率）

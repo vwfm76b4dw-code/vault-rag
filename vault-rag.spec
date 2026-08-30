@@ -27,7 +27,7 @@ hidden = [
 ]
 
 a = Analysis(
-    ["webui.py"],
+    ["vault_rag/webui.py"],
     pathex=[],
     binaries=[],
     datas=[

@@ -4,7 +4,7 @@
 vault 只读；本模块不写任何文件。
 """
 import re
-from config import MAX_CHARS, OVERLAP, MIN_CHARS
+from vault_rag.config import MAX_CHARS, OVERLAP, MIN_CHARS
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 

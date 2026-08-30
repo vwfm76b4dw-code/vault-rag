@@ -16,34 +16,34 @@ sys.path.insert(0, str(REPO))
 
 class TestParseRules(unittest.TestCase):
     def test_basic_kinds(self):
-        import scope
+        from vault_rag import scope
         rules = scope.parse_rules("知识/\n*.md\n!知识/旧/\n")
         kinds = [r[0] for r in rules]
         self.assertEqual(kinds, ["include", "include", "exclude"])
 
     def test_external_with_alias(self):
-        import scope
+        from vault_rag import scope
         rules = scope.parse_rules("@C:/x/CLAUDE.md as external/AI.md")
         self.assertEqual(rules[0][0], "external")
         self.assertEqual(rules[0][2], "external/AI.md")
 
     def test_external_relative_raises(self):
-        import scope
+        from vault_rag import scope
         with self.assertRaises(ValueError):
             scope.parse_rules("@relative/path.md")
 
     def test_comments_blank_ignored(self):
-        import scope
+        from vault_rag import scope
         self.assertEqual(scope.parse_rules("# 注释\n\n   \n"), [])
 
     def test_dir_rule_requires_slash_boundary(self):
-        import scope
+        from vault_rag import scope
         (kind, pred) = scope.parse_rules("知识/")[0]
         self.assertTrue(pred("知识/原理/x.md"))
         self.assertFalse(pred("知识库/x.md"))      # 前缀必须到目录边界
 
     def test_glob_not_cross_directory(self):
-        import scope
+        from vault_rag import scope
         (kind, pred) = scope.parse_rules("*.md")[0]
         self.assertTrue(pred("根级.md"))
         self.assertFalse(pred("知识/子.md"))
@@ -51,7 +51,7 @@ class TestParseRules(unittest.TestCase):
 
 class TestCollectFiles(unittest.TestCase):
     def _collect(self, rules_text: str, vault: Path):
-        import scope
+        from vault_rag import scope
         rules = scope.parse_rules(rules_text)
         orig_vault = scope.VAULT
         scope.VAULT = vault                    # 指向临时 vault，不碰真实数据

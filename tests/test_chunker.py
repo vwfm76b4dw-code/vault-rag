@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from chunker import chunk_markdown, chunk_note, _split_long
+from vault_rag.chunker import chunk_markdown, chunk_note, _split_long
 
 
 class TestSplitLong(unittest.TestCase):

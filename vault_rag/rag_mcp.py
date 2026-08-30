@@ -18,9 +18,9 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 # 让 rag_mcp 能 import 同目录的 config/search
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import DB_PATH, DIM, MODEL_NAME_QWEN, TORCH_THREADS
+from vault_rag.config import DB_PATH, DIM, MODEL_NAME_QWEN, TORCH_THREADS
 
 mcp = FastMCP("vault-rag")
 
@@ -53,7 +53,7 @@ def _embed_query(query: str):
     _ensure_model()
     import numpy as np
     import torch
-    from config import QUERY_INSTRUCTION
+    from vault_rag.config import QUERY_INSTRUCTION
 
     model, tok = _MODEL_CACHE["model"], _MODEL_CACHE["tokenizer"]
     text = QUERY_INSTRUCTION + query
@@ -90,7 +90,7 @@ def semantic_search(query: str, top_k: int = 8, scope_dir: str = "") -> dict:
         top_k: 返回条数（默认 8）。
         scope_dir: 可选目录前缀过滤，如 "知识/" 或 "研究/GitHub热门-2026-08/"。
     """
-    from search import search as _search
+    from vault_rag.search import search as _search
 
     results = _search(query, top_k=top_k, scope_dir=scope_dir or None)
     return {
@@ -115,7 +115,7 @@ def hybrid_search(query: str, top_k: int = 8) -> dict:
     语义召回概念相关内容，关键词兜底精确术语，融合后兼顾两者。
     """
     import numpy as np
-    from search import fetch_rows
+    from vault_rag.search import fetch_rows
 
     rows = fetch_rows()          # (chunk_id, rel_path, section, text, vec_bytes) 同行对齐
     if not rows:
@@ -192,7 +192,7 @@ def refresh_index(max_files: int = 0) -> dict:
     """
     import contextlib
     import io
-    import indexer_qwen
+    from vault_rag import indexer_qwen
 
     buf_out, buf_err = io.StringIO(), io.StringIO()
     try:
@@ -209,7 +209,7 @@ def refresh_index(max_files: int = 0) -> dict:
     notes = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     con.close()
     # 索引刚变过，清掉进程内向量缓存让下次查询重新加载
-    import search
+    from vault_rag import search
     search._CACHE["stamp"] = None
     return {"ok": True, "notes": notes, "chunks": chunks,
             "vectors": blobs, "log_tail": log_tail}

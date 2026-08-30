@@ -70,19 +70,56 @@ AI 评价经 `claude -p` 无头调用，支持定期迭代（计划任务 + git 
 ## 快速开始
 
 ```bash
+# 0. 安装（可选，也可直接在仓库根目录运行）
+pip install -e .
+
 # 1. 配置范围（编辑 include.txt）
 知识/
 项目/
 @/path/to/your/CLAUDE.md as external/AI工程哲学-ClaudeMd.md
 
-# 2. 首次索引（需 LM Studio 或本地 transformers）
-python run_index.py
+# 2. 首次索引（需 LM Studio 端点或本地 transformers）
+python -m vault_rag.indexer_qwen
 
-# 3. 检索
-python search.py "agent 怎么防遗忘"
+# 3. 检索 / 问答 / 关系图 / 权重 / 知识树
+python -m vault_rag.search "agent 怎么防遗忘"
+python -m vault_rag.relations build
+python -m vault_rag.weight_v2
+python -m vault_rag.project_tree all
 
-# 4. 生成项目知识树
-python project_tree.py all
+# 4. Web 控制台
+python -m vault_rag.webui
+```
+
+## 目录结构
+
+```
+vault-rag/
+├── vault_rag/            # 核心 Python 包
+│   ├── config.py         #   全局配置（路径/线程/端点，环境变量可覆盖）
+│   ├── scope.py          #   include.txt 解析 → 待索引清单
+│   ├── chunker.py        #   markdown 语义切块
+│   ├── indexer_qwen.py   #   主索引器（transformers + SQLite BLOB 向量）
+│   ├── search.py         #   检索（向量链 HTTP→内置llama.cpp→关键词）
+│   ├── embed_providers.py#   内置 llama.cpp 托管 + HF GGUF 下载器
+│   ├── freshness.py      #   五级时效信号引擎
+│   ├── relations.py      #   四边知识关系图
+│   ├── weight_v2.py      #   权重机制（引用+继承+AI评价）
+│   ├── project_tree.py   #   项目知识树（mermaid）
+│   ├── rag_mcp.py        #   MCP 服务器
+│   ├── webui.py          #   Web 控制台（FastAPI + pywebview）
+│   ├── webui_lib.py      #   控制台后端逻辑
+│   ├── git_diff_scope.py #   git 基线变更发现
+│   ├── indexer.py        #   legacy HTTP 索引器（独立产物）
+│   └── multimodal/       #   VL 多模态（实验）
+├── scripts/              # 下载器/注入器/净化等运维脚本
+├── tests/                # 58 用例，零 torch 依赖
+├── webui_assets/         # 控制台前端（原生 HTML/CSS/JS，无框架无 CDN）
+├── include.txt           # 索引范围声明（唯一事实来源）
+├── stop_hook.py          # Claude Code Stop hook 入口
+├── run_index.py          # 索引启动包装器（失败自愈信号）
+├── vault-rag.spec        # PyInstaller 打包配置
+└── pyproject.toml        # pip install -e . 入口
 ```
 
 ### 环境变量

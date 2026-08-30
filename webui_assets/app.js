@@ -8,7 +8,7 @@ const $ = (id) => document.getElementById(id);
   let tx = innerWidth / 2, ty = innerHeight * .3, x = tx, y = ty;
   addEventListener("mousemove", (e) => { tx = e.clientX; ty = e.clientY; }, { passive: true });
   (function loop() {
-    x += (tx - x) * 0.08; y += (ty - y) * 0.08;        // 缓动跟随
+    x += (tx - x) * 0.12; y += (ty - y) * 0.12;        // 缓动跟随（快而不僵）
     glow.style.transform = `translate(${x}px, ${y}px)`;
     requestAnimationFrame(loop);
   })();

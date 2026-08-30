@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vault-rag"
+version = "1.1.0"
+description = "本地优先的个人知识库 RAG 系统：语义检索 + 时效引擎 + 知识关系图 + MCP + Web 控制台"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+
+[tool.setuptools]
+packages = ["vault_rag", "vault_rag.multimodal"]
+
+[project.gui-scripts]
+vault-rag = "vault_rag.webui:main"
+
+[tool.unittest]
+discover = "tests"

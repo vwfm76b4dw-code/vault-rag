@@ -4,5 +4,5 @@ REM 用法：双击；或命令行 webui.bat --browser（浏览器模式）/ --s
 cd /d "%~dp0"
 set PYTHONIOENCODING=utf-8
 set PYTHONUNBUFFERED=1
-python webui.py %*
+python -m vault_rag.webui %*
 pause

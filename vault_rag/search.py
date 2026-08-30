@@ -4,7 +4,7 @@
 与 indexer_qwen.py 的编码方式完全同步（last_token_pool + normalize + instruction 前缀）。
 用法：
     python search.py "查询词"            # 命令行检索
-    from search import search           # 供 MCP/脚本调用
+    from vault_rag.search import search           # 供 MCP/脚本调用
 
 实现要点：
 - 文本与向量在一条 SQL 里 JOIN 取出，chunk_id 是否连续无关紧要（修复删除后错配）
@@ -22,8 +22,8 @@ import time
 
 import numpy as np
 
-from config import DB_PATH, MODEL_NAME_QWEN, DIM, TOP_K, QUERY_INSTRUCTION, TORCH_THREADS
-from config import API_URL as EMBED_HTTP_URL, MODEL as EMBED_HTTP_MODEL
+from vault_rag.config import DB_PATH, MODEL_NAME_QWEN, DIM, TOP_K, QUERY_INSTRUCTION, TORCH_THREADS
+from vault_rag.config import API_URL as EMBED_HTTP_URL, MODEL as EMBED_HTTP_MODEL
 
 MAX_LEN = 512
 EXCLUDE_PATTERNS = ["%.codex/%"]   # 排除系统目录
@@ -127,7 +127,7 @@ def embed_query(query: str) -> np.ndarray:
                 raise EmbedUnavailable(f"embedding 端点调用失败（{type(e).__name__}）") from e
     if EMBED_BACKEND in ("auto", "llamacpp"):
         try:
-            import embed_providers
+            from vault_rag import embed_providers
             return np.asarray(
                 embed_providers.embed_llamacpp(QUERY_INSTRUCTION + query),
                 dtype=np.float32)

@@ -23,7 +23,7 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
-from config import CREATE_NO_WINDOW
+from vault_rag.config import CREATE_NO_WINDOW
 VAULT = Path(os.environ.get("VAULT_PATH", str(Path.home() / "Documents" / "Obsidian Vault")))
 SIGNAL = BASE / "data" / ".last_index_signal"
 LOG = BASE / "data" / "index_auto.log"

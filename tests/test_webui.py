@@ -9,7 +9,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from webui_lib import (build_context_block, build_messages, chat_api_key,
+from vault_rag.webui_lib import (build_context_block, build_messages, chat_api_key,
                        create_note, load_local_settings, save_local_settings,
                        save_scope_text, validate_scope_text)
 
@@ -54,7 +54,7 @@ class TestScopeValidate(unittest.TestCase):
 
     def test_save_rejects_invalid(self):
         with tempfile.TemporaryDirectory() as td:
-            import scope
+            from vault_rag import scope
             orig = scope.INCLUDE_PATH
             scope.INCLUDE_PATH = Path(td) / "include.txt"
             try:
@@ -70,7 +70,7 @@ class TestScopeValidate(unittest.TestCase):
 class TestLocalSettings(unittest.TestCase):
     def test_roundtrip_and_key_priority(self):
         with tempfile.TemporaryDirectory() as td:
-            import config, webui_lib
+            from vault_rag import config, webui_lib
             orig = (config.LOCAL_SETTINGS_PATH, webui_lib.LOCAL_SETTINGS_PATH)
             p = Path(td) / "_local_settings.json"
             config.LOCAL_SETTINGS_PATH = webui_lib.LOCAL_SETTINGS_PATH = p
@@ -92,7 +92,7 @@ class TestLocalSettings(unittest.TestCase):
 class TestCreateNote(unittest.TestCase):
     def test_creates_with_frontmatter_and_rejects_escape(self):
         with tempfile.TemporaryDirectory() as td:
-            import webui_lib
+            from vault_rag import webui_lib
             orig = webui_lib.VAULT
             webui_lib.VAULT = Path(td)
             try:
@@ -134,7 +134,7 @@ class TestEmbedBackend(unittest.TestCase):
 
         srv = HTTPServer(("127.0.0.1", 0), H)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
-        import search
+        from vault_rag import search
         orig = (search.EMBED_HTTP_URL, search.EMBED_BACKEND)
         search.EMBED_HTTP_URL = f"http://127.0.0.1:{srv.server_port}/v1/embeddings"
         search.EMBED_BACKEND = "http"
@@ -167,7 +167,7 @@ class TestKeywordFallback(unittest.TestCase):
         return db
 
     def test_bigram_matches_partial_phrase(self):
-        import webui_lib
+        from vault_rag import webui_lib
         with tempfile.TemporaryDirectory() as td:
             orig = webui_lib.DB_PATH
             webui_lib.DB_PATH = self._db(Path(td))

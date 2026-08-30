@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-from config import SUBPROCESS_FLAGS
+from vault_rag.config import SUBPROCESS_FLAGS
 
 BASE = Path(__file__).resolve().parent
 LOG = BASE / "data" / "index_log_qwen.txt"

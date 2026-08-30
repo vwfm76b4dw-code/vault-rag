@@ -12,7 +12,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from freshness import Freshness, cluster_kind, cluster_of, extract_signals, rank_cluster
+from vault_rag.freshness import Freshness, cluster_kind, cluster_of, extract_signals, rank_cluster
 
 
 def _mk(td: Path, name: str, content: str) -> tuple[Path, str]:

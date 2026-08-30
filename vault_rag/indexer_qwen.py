@@ -24,9 +24,9 @@ from pathlib import Path
 
 import numpy as np
 
-from config import DATA_DIR, DB_PATH, TORCH_THREADS
-from chunker import chunk_note
-import scope as scopes
+from vault_rag.config import DATA_DIR, DB_PATH, TORCH_THREADS
+from vault_rag.chunker import chunk_note
+from vault_rag import scope as scopes
 
 MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
 DIM = 1024

@@ -14,7 +14,7 @@ class TestConfigEnvOverride(unittest.TestCase):
     def _run(self, env: dict) -> str:
         code = (
             "import sys; sys.path.insert(0, r'%s');"
-            "import config;"
+            "from vault_rag import config;"
             "print(config.DB_PATH);"
             "print(config.VAULT)" % REPO
         )

@@ -12,7 +12,7 @@ sys.path.insert(0, str(REPO))
 
 class TestGitDiffScopeBootstrap(unittest.TestCase):
     def setUp(self):
-        import git_diff_scope as g
+        from vault_rag import git_diff_scope as g
         self.g = g
         self._tmp = tempfile.TemporaryDirectory()
         g.REPO = Path(self._tmp.name) / ".ragfiles"
