@@ -39,6 +39,7 @@
   <nav id="tabs">
     <button class="tab active" data-tab="chat">✦ 问答</button>
     <button class="tab" data-tab="board">▦ 看板</button>
+    <button class="tab" data-tab="repo">▤ 仓库</button>
     <button class="tab" data-tab="manage">⚙ 管理器</button>
   </nav>
   <button id="btn-gear" title="快捷设置 (Key / 端点)">⚙</button>
@@ -96,6 +97,40 @@
         <h3>最近索引的笔记</h3>
         <div id="recent" class="list"></div>
       </div>
+    </div>
+  </section>
+
+  <!-- ============ 仓库 ============ -->
+  <section id="tab-repo" class="panel">
+    <div class="cards" id="repo-cards"></div>
+    <div class="board-card glass">
+      <h3>系统自检 <span class="muted small">（与 MCP 同一条代码链路）</span></h3>
+      <div class="row"><button id="btn-selftest" class="primary">运行自检</button>
+        <span id="selftest-msg" class="muted small"></span></div>
+      <div id="selftest-list" class="kv"></div>
+    </div>
+    <div class="board-card glass">
+      <h3>已索引笔记 <span class="muted small" id="repo-total"></span></h3>
+      <div class="row">
+        <input id="repo-q" placeholder="按路径搜索…">
+        <select id="repo-domain" class="sel" style="max-width:180px"><option value="">全部领域</option></select>
+        <button id="btn-repo-search">搜索</button>
+      </div>
+      <div id="repo-notes" class="list"></div>
+      <div class="row" style="justify-content:center">
+        <button id="repo-prev">‹ 上一页</button>
+        <span id="repo-page" class="muted small mono"></span>
+        <button id="repo-next">下一页 ›</button>
+      </div>
+    </div>
+    <div class="board-card glass">
+      <h3>库操作 <span class="muted small">（危险操作均有确认）</span></h3>
+      <div class="row">
+        <button id="btn-clear-cache">清空 Embed 缓存</button>
+        <button id="btn-vacuum">VACUUM 压缩数据库</button>
+        <button id="btn-rebuild" class="danger">清空索引并全量重建</button>
+      </div>
+      <div id="repo-op-msg" class="msg"></div>
     </div>
   </section>
 
@@ -167,7 +202,15 @@
         <div class="row"><input id="np-name" placeholder="名称（同名即覆盖）"></div>
         <div class="row"><input id="np-url" placeholder="端点 URL（…/v1/chat/completions）"></div>
         <div class="row"><input id="np-model" placeholder="模型名（如 agnes-2.5-flash）"></div>
+        <div class="row"><input id="np-key" type="password" placeholder="该档案专用 key（可选，留空用全局）"></div>
         <div class="row"><button id="btn-np-save" class="primary">保存档案并启用</button></div>
+        <div class="sep"></div>
+        <p class="muted small">生成偏好</p>
+        <div class="row"><span class="muted small" style="min-width:70px">temperature</span>
+          <input id="pref-temp" type="number" min="0" max="2" step="0.1" style="max-width:90px">
+          <span class="muted small" style="min-width:40px">top_k</span>
+          <input id="pref-topk" type="number" min="1" max="30" step="1" style="max-width:90px">
+          <button id="btn-pref-save">保存</button><span id="pref-msg" class="msg"></span></div>
       </details>
       <div class="row">
         <button id="btn-provider-test">测试当前连通</button>
@@ -198,7 +241,9 @@
         <div class="row"><input id="ep-name" placeholder="名称（如 LM Studio）"></div>
         <div class="row"><input id="ep-url" placeholder="URL（…/v1/embeddings）"></div>
         <div class="row"><input id="ep-model" placeholder="模型名（如 text-embedding-qwen3-embedding-0.6b）"></div>
+        <div class="row"><input id="ep-key" type="password" placeholder="该端点 key（可选，云端 embedding 用；本地留空）"></div>
         <div class="row"><button id="btn-ep-save" class="primary">保存端点并启用</button></div>
+        <div class="row" id="ep-quick"></div>
       </details>
 
       <h3 class="mt sub-h">内置 llama.cpp <span id="llama-state" class="muted small"></span></h3>

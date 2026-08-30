@@ -45,6 +45,7 @@ async function renderProviders() {
     row.innerHTML =
       `<div class="p-body"><div class="p-name">${escapeHtml(p.name)}</div>` +
       `<div class="p-sub">${escapeHtml(p.url)} · ${escapeHtml(p.model)}</div></div>` +
+      (p.key ? `<span class="p-tag muted" title="档案自带 key">🔑</span>` : ``) +
       (active ? `<span class="p-tag">● 使用中</span>`
               : `<span class="p-tag muted">切换</span>`) +
       (p.custom ? `<button class="p-del" title="删除该档案">✕</button>` : ``);
@@ -138,10 +139,28 @@ function renderDl() {
   }).catch(() => {});
 }
 
+async function loadPrefs() {
+  try {
+    const pf = await api("/api/prefs");
+    $("pref-temp").value = pf.temperature ?? 0.3;
+    $("pref-topk").value = pf.top_k ?? 6;
+  } catch (_) {}
+}
+$("btn-pref-save").addEventListener("click", async () => {
+  try {
+    await post("/api/prefs", {
+      temperature: parseFloat($("pref-temp").value),
+      top_k: parseInt($("pref-topk").value, 10),
+    });
+    setMsgAuto("pref-msg", "✓ 已保存", true);
+  } catch (e) { setMsg("pref-msg", e.message, false); }
+});
+
 function openModal() {
   $("modal-backdrop").classList.add("open");
   renderProviders().catch(() => {});
   renderEmbed().catch(() => {});
+  loadPrefs().catch(() => {});
 }
 function closeModal() { $("modal-backdrop").classList.remove("open"); }
 $("btn-gear").addEventListener("click", openModal);
@@ -154,9 +173,10 @@ addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 /* 新增/修改生成档案 */
 $("btn-np-save").addEventListener("click", async () => {
   const name = $("np-name").value.trim(), url = $("np-url").value.trim(), model = $("np-model").value.trim();
+  const key = $("np-key").value.trim();
   if (!name || !url) { alert("名称与 URL 必填"); return; }
   try {
-    await post("/api/providers", { name, url, model });
+    await post("/api/providers", { name, url, model, key: key || undefined });
     $("np-name").value = $("np-url").value = $("np-model").value = "";
     renderProviders(); refreshStatus();
   } catch (e) { alert(e.message); }
@@ -185,14 +205,33 @@ $("modal-key-save").addEventListener("click", async () => {
 });
 
 /* Embedding 端点档案新增 */
+const EMBED_PRESETS = [
+  { name: "LM Studio", url: "http://127.0.0.1:1234/v1/embeddings", model: "text-embedding-qwen3-embedding-0.6b" },
+  { name: "llama-server 内置", url: "http://127.0.0.1:18900/v1/embeddings", model: "qwen3" },
+  { name: "硅基流动 Qwen3", url: "https://api.siliconflow.cn/v1/embeddings", model: "Qwen/Qwen3-Embedding-0.6B" },
+];
+(function renderEmbedQuick() {
+  const box = $("ep-quick");
+  box.innerHTML = `<span class="muted small">快捷填入：</span>` + EMBED_PRESETS.map(
+    (p, i) => `<button class="chip" data-ep="${i}">${p.name}</button>`).join("");
+  box.querySelectorAll("[data-ep]").forEach((b) => b.addEventListener("click", () => {
+    const p = EMBED_PRESETS[b.dataset.ep];
+    $("ep-name").value = p.name; $("ep-url").value = p.url; $("ep-model").value = p.model;
+  }));
+})();
+
 $("btn-ep-save").addEventListener("click", async () => {
-  const name = $("ep-name").value.trim(), url = $("ep-url").value.trim(), model = $("ep-model").value.trim();
+  const name = $("ep-name").value.trim(), url = $("ep-url").value.trim(),
+        model = $("ep-model").value.trim(), key = $("ep-key").value.trim();
   if (!name || !url) { alert("名称与 URL 必填"); return; }
   try {
     const cfg = await api("/api/embed/config");
     const profiles = (cfg.http_profiles || []).filter((p) => p.name !== name);
-    profiles.push({ name, url, model });
+    const prof = { name, url, model };
+    if (key) prof.key = key;
+    profiles.push(prof);
     await post("/api/embed/config", { http_profiles: profiles, http_active: name });
+    $("ep-key").value = "";
     renderEmbed();
   } catch (e) { alert(e.message); }
 });
@@ -277,6 +316,7 @@ document.querySelectorAll("#tabs .tab").forEach((btn) => {
     btn.classList.add("active");
     $("tab-" + btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "board") loadBoard();
+    if (btn.dataset.tab === "repo") loadRepo();
     if (btn.dataset.tab === "manage") loadManage();
   });
 });
@@ -625,3 +665,100 @@ $("btn-key-save").addEventListener("click", async () => {
 refreshStatus();
 setInterval(refreshStatus, 10000);
 loadManage();
+
+/* ================= 仓库管理 ================= */
+let repoPage = 1;
+async function loadRepo() {
+  try {
+    const s = await api("/api/repo/stats");
+    const d = await api("/api/repo/notes?page=1&size=15");
+    await renderRepo(s, d);
+  } catch (e) {
+    $("repo-cards").innerHTML = `<div class="card bad"><div class="num">✗</div><div class="lbl">${escapeHtml(e.message)}</div></div>`;
+  }
+}
+async function loadRepoPage(page = 1) {
+  const q = $("repo-q").value.trim();
+  const domain = $("repo-domain").value;
+  const d = await api(`/api/repo/notes?q=${encodeURIComponent(q)}&domain=${encodeURIComponent(domain)}&page=${page}&size=15`);
+  const s = await api("/api/repo/stats");
+  await renderRepo(s, d);
+}
+async function renderRepo(s, d) {
+  repoPage = d.page;
+  const cards = [
+    ["笔记", s.notes, ""], ["文本块", s.chunks, ""],
+    ["向量", s.vectors, s.consistent ? "" : "不一致!"],
+    ["embed 缓存", s.embed_cache, ""], ["库大小", s.db_mb + "MB", ""],
+  ];
+  $("repo-cards").innerHTML = cards.map(([lbl, num, err]) =>
+    `<div class="card glass ${err ? "bad" : ""}"><div class="num">${num}</div>` +
+    `<div class="lbl">${lbl}${err ? " · " + err : ""}</div></div>`).join("");
+  $("repo-total").textContent = `共 ${d.total} 篇`;
+  const sel = $("repo-domain");
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">全部领域</option>` +
+    d.domains.map((x) => `<option ${x === cur ? "selected" : ""}>${escapeHtml(x)}</option>`).join("");
+  $("repo-notes").innerHTML = d.notes.length ? d.notes.map((n) =>
+    `<div class="row"><a data-path="${escapeHtml(n.rel_path)}" title="${escapeHtml(n.rel_path)}">${escapeHtml(n.rel_path)}</a>` +
+    `<span class="time">${n.chunks}块/${n.vectors}向量</span>` +
+    `<span class="time">${n.mtime_str}</span>` +
+    `<button class="p-del" data-del="${escapeHtml(n.rel_path)}">移出索引</button></div>`).join("")
+    : `<span class="empty">无匹配笔记</span>`;
+  $("repo-page").textContent = `${d.page} / ${d.pages}`;
+  $("repo-notes").querySelectorAll("a").forEach((a) =>
+    a.addEventListener("click", () =>
+      post("/api/open", { rel_path: a.dataset.path }).catch((e) => alert(e.message))));
+  $("repo-notes").querySelectorAll("[data-del]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!confirm(`把「${b.dataset.del}」移出索引？\n（vault 原文不受影响，下次增量索引会重新收录）`)) return;
+      try {
+        await api("/api/repo/notes", { method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rel_path: b.dataset.del }) });
+        loadRepoPage(repoPage);
+      } catch (e) { alert(e.message); }
+    }));
+}
+$("btn-repo-search").addEventListener("click", () => loadRepoPage(1));
+$("repo-q").addEventListener("keydown", (e) => { if (e.key === "Enter") loadRepoPage(1); });
+$("repo-prev").addEventListener("click", () => repoPage > 1 && loadRepoPage(repoPage - 1));
+$("repo-next").addEventListener("click", () => loadRepoPage(repoPage + 1));
+$("repo-domain").addEventListener("change", () => loadRepoPage(1));
+
+$("btn-clear-cache").addEventListener("click", async () => {
+  if (!confirm("清空全部 embedding KV 缓存？\n（检索不受影响；下次重建索引将重新编码全部文本）")) return;
+  try {
+    const r = await post("/api/repo/clear-cache");
+    setMsgAuto("repo-op-msg", `✓ 已清空 ${r.cleared} 条缓存`, true);
+    loadRepo();
+  } catch (e) { setMsg("repo-op-msg", e.message, false); }
+});
+$("btn-vacuum").addEventListener("click", async () => {
+  try {
+    const r = await post("/api/repo/vacuum");
+    setMsgAuto("repo-op-msg", `✓ VACUUM 完成：${r.before_mb}MB → ${r.after_mb}MB`, true);
+    loadRepo();
+  } catch (e) { setMsg("repo-op-msg", e.message, false); }
+});
+$("btn-rebuild").addEventListener("click", async () => {
+  if (!confirm("清空全部索引并全量重建？\n（KV 缓存保留，未变内容重建很快；vault 原文不受影响）")) return;
+  try {
+    await post("/api/repo/rebuild");
+    setMsgAuto("repo-op-msg", "✓ 索引已清空，正在启动全量重建…", true, 10000);
+    await post("/api/index/refresh");
+    loadRepo();
+  } catch (e) { setMsg("repo-op-msg", e.message, false); }
+});
+
+$("btn-selftest").addEventListener("click", async () => {
+  $("selftest-msg").textContent = "自检运行中…";
+  $("selftest-list").innerHTML = "";
+  try {
+    const r = await api("/api/selftest");
+    $("selftest-msg").textContent = r.ok ? `✓ 全部通过（${r.elapsed_ms}ms）` : `✗ 有 ${r.checks.filter((c) => !c.ok).length} 项未过（${r.elapsed_ms}ms）`;
+    $("selftest-list").innerHTML = r.checks.map((c) =>
+      `<div class="row"><span style="color:${c.ok ? "var(--green)" : "var(--err)"}">${c.ok ? "✓" : "✗"} ${escapeHtml(c.name)}</span>` +
+      `<span class="muted small" style="text-align:right">${escapeHtml(c.detail)}</span></div>`).join("");
+  } catch (e) { $("selftest-msg").textContent = "✗ " + e.message; }
+});

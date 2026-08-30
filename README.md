@@ -158,16 +158,24 @@ python webui.py --browser  # 浏览器打开
 python webui.py --server   # 只起服务（远程/调试），默认 http://127.0.0.1:8765
 ```
 
-三个页面：
+四个页面：
 
-- **问答** — 语义检索 + Agnes 生成回答（流式，标注 [n] 引用来源，点击来源打开原文；
-  被时效引擎裁决取代的文档自动警示）。Agnes key 在管理器页设置（存 `data/_local_settings.json`，
-  已 gitignore）或环境变量 `AGNES_API_KEY`。无 key / 端点故障自动降级为纯检索；
-  embedding 模型不可用再降级关键词兜底。生成端点 OpenAI 兼容，可用
-  `RAG_CHAT_API_URL`/`RAG_CHAT_MODEL` 指向 llama.cpp server 等本地后端
+- **问答** — 语义检索 + 云端供应商生成回答（流式，标注 [n] 引用来源，点击来源打开原文，
+  回答一键复制；被时效引擎裁决取代的文档自动警示）。key 在设置面板按供应商分别保存
+  （存 `data/_local_settings.json`，已 gitignore）或环境变量 `AGNES_API_KEY`。
+  供应商不支持流式时自动退非流式；无 key/端点故障自动降级纯检索；
+  embedding 不可用再降级关键词兜底
 - **看板** — 笔记/块/向量/待索引/缓存计数、领域分布、关系图边统计、权重榜、最近索引
+- **仓库** — 已索引笔记管理（搜索/分页/移出索引）、系统自检（沿 MCP 同步链路 7 项体检）、
+  清空 embed 缓存 / VACUUM 压缩 / 清空索引全量重建
 - **管理器** — include.txt 编辑保存（语法校验）、添加外部 @ 文件、新建笔记（自动 frontmatter）、
   触发增量索引（实时日志）
+
+模型管理（齿轮）：**生成供应商** 10 家预设（Agnes/DeepSeek/智谱/Kimi/通义/硅基流动/
+OpenRouter/OpenAI/Ollama/llama.cpp，每个档案可带独立 key，自定义档案增删改）+
+生成偏好（temperature/top_k）；**检索 Embedding** 独立设置（模式四选、HTTP 端点档案
+带 key、内置 llama.cpp 状态、HF GGUF 下载器 hf-mirror 可选）。外部推理：任何
+OpenAI 兼容端点均可接入，本地推理（Ollama/llama.cpp/内置）无需 key。
 
 torch 编码线程数默认 10（`RAG_TORCH_THREADS` 可调）；Windows 下所有子进程不弹控制台黑框。
 

@@ -310,3 +310,9 @@ nav .tab, button, .chip, .p-tag, .dot, .status-pill, header .brand { user-select
   color: var(--muted); background: rgba(255,255,255,.04); }
 .copy-btn:hover { color: var(--green); border-color: var(--green-line); }
 
+
+button.danger { border-color: rgba(224,108,95,.5); color: var(--err); }
+button.danger:hover { background: rgba(224,108,95,.12); border-color: var(--err); }
+.mono { font-family: var(--mono); }
+.provider-list { max-height: 300px; overflow-y: auto; }
+#repo-notes .row button { font-size: 11px; padding: 3px 8px; }

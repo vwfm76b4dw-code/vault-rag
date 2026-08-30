@@ -38,6 +38,8 @@ REPO = Path(__file__).resolve().parent.parent
 
 app = FastAPI(title="vault-rag 控制台", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=ASSETS), name="static")
+from vault_rag.webui_ext import router as ext_router  # noqa: E402
+app.include_router(ext_router)
 
 _EMBED_LOCK = threading.Lock()          # 查询编码串行化（10 线程上限下避免争抢）
 _INDEX_LOCK = threading.Lock()          # 同一时间只允许一个索引进程（进程内）
@@ -241,6 +243,7 @@ class ProviderReq(BaseModel):
     name: str = ""
     url: str = ""
     model: str = ""
+    key: str = ""
 
 
 @app.post("/api/providers")
@@ -248,7 +251,8 @@ def api_providers_switch(req: ProviderReq):
     try:
         prof = lib.switch_provider(req.name.strip() or None,
                                    req.url.strip() or None,
-                                   req.model.strip() or None)
+                                   req.model.strip() or None,
+                                   key=req.key.strip() or None)
     except ValueError as e:
         raise HTTPException(422, str(e))
     return {"ok": True, "active": prof}

@@ -45,20 +45,36 @@ def chat_api_key() -> str:
     return str(load_local_settings().get("agnes_key") or "")
 
 
-def chat_ready() -> bool:
-    return bool(chat_api_key())
-
-
 # ---------- 供应商档案（cc-switch 式：预设 + 自定义增删改）----------
+# 兼容性：全部走 OpenAI 兼容 /chat/completions；每个档案可带独立 key
+# （留空回落全局 key），本地推理类（Ollama/llama.cpp）无需 key。
 
 PROVIDER_PRESETS = [
     {"name": "Agnes 国内", "url": "https://api.agnes-ai.cn/v1/chat/completions",
      "model": "agnes-2.5-flash"},
-    {"name": "Agnes 国际", "url": "https://apihub.agnes-ai.com/v1/chat/completions",
-     "model": "agnes-2.5-flash"},
+    {"name": "DeepSeek", "url": "https://api.deepseek.com/v1/chat/completions",
+     "model": "deepseek-chat"},
+    {"name": "智谱 GLM", "url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+     "model": "glm-4-flash"},
+    {"name": "Kimi 月之暗面", "url": "https://api.moonshot.cn/v1/chat/completions",
+     "model": "moonshot-v1-8k"},
+    {"name": "通义千问", "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+     "model": "qwen-plus"},
+    {"name": "硅基流动", "url": "https://api.siliconflow.cn/v1/chat/completions",
+     "model": "Qwen/Qwen2.5-7B-Instruct"},
+    {"name": "OpenRouter", "url": "https://openrouter.ai/api/v1/chat/completions",
+     "model": "openrouter/auto"},
+    {"name": "OpenAI", "url": "https://api.openai.com/v1/chat/completions",
+     "model": "gpt-4o-mini"},
+    {"name": "Ollama 本地", "url": "http://127.0.0.1:11434/v1/chat/completions",
+     "model": "llama3.1"},
     {"name": "llama.cpp 本地", "url": "http://127.0.0.1:8080/v1/chat/completions",
      "model": "qwen3"},
 ]
+
+
+def _is_local_url(url: str) -> bool:
+    return any(h in url for h in ("127.0.0.1", "localhost", "0.0.0.0"))
 
 
 def chat_profiles() -> list[dict]:
@@ -66,24 +82,44 @@ def chat_profiles() -> list[dict]:
     return [dict(p) for p in PROVIDER_PRESETS] + [dict(c) for c in custom]
 
 
+def _provider_key(prof: dict) -> str:
+    """key 解析：档案自带 key > 全局 agnes_key > 环境变量。"""
+    k = str(prof.get("key") or "")
+    return k or chat_api_key()
+
+
 def active_provider() -> dict:
     """当前生效的生成供应商（存 _local_settings.json，改完即时生效）。"""
     s = load_local_settings()
     cur = s.get("provider")
+    profiles = chat_profiles()
     if isinstance(cur, dict) and cur.get("url"):
-        return {"name": str(cur.get("name", "自定义")),
+        prof = {"name": str(cur.get("name", "自定义")),
                 "url": str(cur["url"]), "model": str(cur.get("model", ""))}
-    for p in chat_profiles():
+        for p in profiles:                    # 带回档案里存的独立 key
+            if p["name"] == prof["name"] and p.get("key"):
+                prof["key"] = p["key"]
+        return prof
+    for p in profiles:
         if p["name"] == cur:
             return dict(p)
-    return dict(PROVIDER_PRESETS[0])            # 默认国内站
+    return dict(profiles[0])                  # 默认 Agnes 国内
+
+
+def chat_ready() -> bool:
+    prof = active_provider()
+    if _is_local_url(prof["url"]):
+        return True                           # 本地推理无需 key
+    return bool(_provider_key(prof))
 
 
 def switch_provider(name: str | None = None, url: str | None = None,
-                    model: str | None = None) -> dict:
+                    model: str | None = None, key: str | None = None) -> dict:
     """按名切换；带 url 则新增/覆盖自定义档案。返回生效档案。"""
     if url:
         prof = {"name": name or "自定义", "url": url, "model": model or "", "custom": True}
+        if key:
+            prof["key"] = key
         s = load_local_settings()
         profiles = [p for p in (s.get("chat_profiles") or []) if p.get("name") != prof["name"]]
         profiles.append(prof)
@@ -96,6 +132,13 @@ def switch_provider(name: str | None = None, url: str | None = None,
     prof = next((p for p in chat_profiles() if p["name"] == name), None)
     if prof is None:
         raise ValueError(f"未知供应商: {name}")
+    if key is not None:                       # 给预设档案也存独立 key
+        s = load_local_settings()
+        profiles = [p for p in (s.get("chat_profiles") or []) if p.get("name") != name]
+        profiles.append({"name": name, "url": prof["url"], "model": prof["model"],
+                         "key": key, "custom": True})
+        save_local_settings({"chat_profiles": profiles})
+        prof = next(p for p in chat_profiles() if p["name"] == name)
     save_local_settings({"provider": {"name": prof["name"], "url": prof["url"],
                                       "model": prof["model"]}})
     return prof
@@ -139,29 +182,48 @@ def build_messages(query: str, chunks: list[dict]) -> list[dict]:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-# ---------- Agnes / OpenAI 兼容端点 ----------
+# ---------- OpenAI 兼容端点调用（多供应商） ----------
 
 class ChatUnavailable(Exception):
     pass
 
 
-def stream_chat(messages: list[dict], temperature: float = 0.3):
-    """流式生成，逐段 yield 文本增量。失败抛 ChatUnavailable。走当前生效供应商。"""
-    key = chat_api_key()
-    if not key:
-        raise ChatUnavailable("未配置 API key（设置面板可填，或设 AGNES_API_KEY 环境变量）")
+def get_pref(key: str, default):
+    """用户偏好（temperature/top_k 等），存 _local_settings.json 的 prefs。"""
+    return (load_local_settings().get("prefs") or {}).get(key, default)
+
+
+def stream_chat(messages: list[dict], temperature: float | None = None):
+    """流式生成，逐段 yield 文本增量。失败抛 ChatUnavailable。走当前生效供应商。
+
+    兼容性：SSE 无 charset 强制 UTF-8；流式不支持时自动退非流式；
+    SSE 内嵌 error 事件转 ChatUnavailable。
+    """
     prof = active_provider()
+    key = _provider_key(prof)
+    local = _is_local_url(prof["url"])
+    if not key and not local:
+        raise ChatUnavailable(f"供应商「{prof['name']}」未配置 key（设置面板可填）")
+    if temperature is None:
+        temperature = float(get_pref("temperature", 0.3))
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    body = {"model": prof["model"], "messages": messages,
+            "temperature": temperature, "stream": True}
     try:
-        r = requests.post(
-            prof["url"],
-            headers={"Authorization": f"Bearer {key}"},
-            json={"model": prof["model"], "messages": messages,
-                  "temperature": temperature, "stream": True},
-            stream=True, timeout=(15, CHAT_TIMEOUT))
+        r = requests.post(prof["url"], headers=headers, json=body,
+                          stream=True, timeout=(15, CHAT_TIMEOUT))
         if r.status_code != 200:
-            raise ChatUnavailable(f"端点 HTTP {r.status_code}: {r.text[:120]}")
+            hint = r.text[:150]
+            # 部分供应商不支持 stream → 退非流式一次性吐出
+            if r.status_code in (400, 404, 422) and ("stream" in hint.lower()):
+                text = chat_once(messages, temperature)
+                if text:
+                    yield text
+                return
+            raise ChatUnavailable(f"端点 HTTP {r.status_code}: {hint}")
         # SSE 不带 charset 时 requests 默认按 ISO-8859-1 解码，中文必乱码 → 强制 UTF-8
         r.encoding = "utf-8"
+        got = False
         for line in r.iter_lines(decode_unicode=True):
             if not line or not line.startswith("data:"):
                 continue
@@ -169,26 +231,38 @@ def stream_chat(messages: list[dict], temperature: float = 0.3):
             if payload == "[DONE]":
                 break
             try:
-                delta = json.loads(payload)["choices"][0]["delta"].get("content")
+                obj = json.loads(payload)
+            except Exception:
+                continue
+            if isinstance(obj, dict) and obj.get("error"):
+                raise ChatUnavailable(f"端点返回错误: {str(obj['error'])[:120]}")
+            try:
+                delta = obj["choices"][0]["delta"].get("content")
             except Exception:
                 continue
             if delta:
+                got = True
                 yield delta
+        if not got and not local:
+            yield ""                              # 空回复也让前端收尾
     except ChatUnavailable:
         raise
     except requests.RequestException as e:
         raise ChatUnavailable(f"端点连接失败: {e}") from e
 
 
-def chat_once(messages: list[dict], temperature: float = 0.3) -> str:
+def chat_once(messages: list[dict], temperature: float | None = None) -> str:
     """非流式兜底。"""
-    key = chat_api_key()
-    if not key:
-        raise ChatUnavailable("未配置 API key")
     prof = active_provider()
+    key = _provider_key(prof)
+    local = _is_local_url(prof["url"])
+    if not key and not local:
+        raise ChatUnavailable("未配置 API key")
+    if temperature is None:
+        temperature = float(get_pref("temperature", 0.3))
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
     r = requests.post(
-        prof["url"],
-        headers={"Authorization": f"Bearer {key}"},
+        prof["url"], headers=headers,
         json={"model": prof["model"], "messages": messages, "temperature": temperature},
         timeout=(15, CHAT_TIMEOUT))
     if r.status_code != 200:
@@ -200,8 +274,9 @@ def test_provider(timeout: float = 15.0) -> dict:
     """连通性测试：不发流，问一声"ping"。返回 {ok, latency_ms, detail}。"""
     t0 = time.time()
     try:
-        chat_once([{"role": "user", "content": "ping，请只回复:pong"}], temperature=0)
-        return {"ok": True, "latency_ms": int((time.time() - t0) * 1000), "detail": "连通"}
+        reply = chat_once([{"role": "user", "content": "ping，请只回复:pong"}], temperature=0)
+        return {"ok": True, "latency_ms": int((time.time() - t0) * 1000),
+                "detail": f"连通 · 回复: {reply[:30]}"}
     except ChatUnavailable as e:
         return {"ok": False, "latency_ms": int((time.time() - t0) * 1000), "detail": str(e)}
 

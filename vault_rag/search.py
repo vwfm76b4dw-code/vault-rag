@@ -64,10 +64,23 @@ def embed_endpoint_alive(force: bool = False) -> bool:
 
 
 def embed_query_http(query: str) -> np.ndarray:
-    """经 OpenAI 兼容端点（LM Studio 1234）取查询向量，同模型同指令前缀，向量与库内兼容。"""
+    """经 OpenAI 兼容端点取查询向量（LM Studio / llama-server / 云端 embedding）。
+
+    档案带 key（如硅基流动）时自动带 Bearer；同模型同指令前缀，与库内向量兼容。
+    """
     import requests
+    headers = {}
+    try:
+        from vault_rag import webui_lib
+        e = webui_lib.load_local_settings().get("embed") or {}
+        act = next((p for p in (e.get("http_profiles") or [])
+                    if p.get("name") == e.get("http_active")), None)
+        if act and act.get("key"):
+            headers["Authorization"] = f"Bearer {act['key']}"
+    except Exception:
+        pass
     r = requests.post(
-        EMBED_HTTP_URL,
+        EMBED_HTTP_URL, headers=headers,
         json={"model": EMBED_HTTP_MODEL, "input": [QUERY_INSTRUCTION + query]},
         timeout=(2, EMBED_HTTP_TIMEOUT))
     r.raise_for_status()
