@@ -254,6 +254,7 @@ function md(text) {
   const inline = (s) => s
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\*\*/g, "")          // 模型输出的孤立 ** 不再显示为字面量
     .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--cyan)">$1</a>');
   for (const ln of lines) {
     const li = ln.match(/^\s*[-*•]\s+(.*)/);
@@ -367,6 +368,7 @@ function setBusy(busy) {
 }
 
 async function sendChat(searchOnly) {
+  if ($("btn-send").disabled) return;          // 防连点并发流
   const q = $("chat-input").value.trim();
   if (!q) return;
   $("chat-input").value = "";
@@ -400,7 +402,7 @@ async function sendChat(searchOnly) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        buf += dec.decode(value, { stream: true });
+        buf += dec.decode(value, { stream: true }).split("\r\n").join("\n");
         let idx;
         while ((idx = buf.indexOf("\n\n")) >= 0) {
           const line = buf.slice(0, idx).trim();

@@ -9,10 +9,10 @@
   --line2: rgba(255, 255, 255, 0.13);
   --fg: #ececf1;
   --muted: #8f9a94;
-  --green: #10a37f;           /* 主强调：GPT 深绿 */
-  --green-deep: #0b7a61;
-  --green-dim: rgba(16, 163, 127, 0.15);
-  --green-line: rgba(16, 163, 127, 0.5);
+  --green: #33ff33;           /* 主强调：GPT 深绿 */
+  --green-deep: #1fcc1f;
+  --green-dim: rgba(51, 255, 51, 0.11);
+  --green-line: rgba(51, 255, 51, 0.45);
   --warn: #d9a04a;
   --err: #e06c5f;
   --radius: 12px;
@@ -27,8 +27,8 @@ body {
 }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
-::-webkit-scrollbar-thumb:hover { background: rgba(16,163,127,.45); background-clip: content-box; border: 2px solid transparent; }
-::selection { background: rgba(16,163,127,.32); }
+::-webkit-scrollbar-thumb:hover { background: rgba(51,255,51,.4); background-clip: content-box; border: 2px solid transparent; }
+::selection { background: rgba(51,255,51,.26); }
 
 /* ---------- 背景：近黑微绿氛围 ---------- */
 .aurora { position: fixed; inset: -20%; z-index: -3; filter: blur(120px); opacity: .16; }
@@ -47,7 +47,7 @@ body {
   position: fixed; z-index: -1; pointer-events: none;
   left: 0; top: 0;
   width: 480px; height: 480px; margin: -240px 0 0 -240px;
-  background: radial-gradient(circle, rgba(16,163,127,.11) 0%, rgba(16,163,127,.04) 42%, transparent 68%);
+  background: radial-gradient(circle, rgba(51,255,51,.10) 0%, rgba(51,255,51,.035) 42%, transparent 68%);
   will-change: transform;
 }
 
@@ -61,7 +61,7 @@ body {
 .glass::before {
   content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
   background: radial-gradient(240px circle at var(--gx, 50%) var(--gy, 50%),
-              rgba(16,163,127,.5), rgba(255,255,255,.08) 45%, transparent 70%);
+              rgba(51,255,51,.45), rgba(255,255,255,.08) 45%, transparent 70%);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask-composite: exclude;
   pointer-events: none; opacity: 0; transition: opacity .22s ease-out;
@@ -90,7 +90,7 @@ nav .tab {
   transition: color .16s ease-out, background .16s ease-out;
 }
 nav .tab:hover { color: var(--fg); background: rgba(255,255,255,.05); }
-nav .tab.active { color: #c8ecdf; background: var(--green-dim); box-shadow: inset 0 0 0 1px var(--green-line); }
+nav .tab.active { color: #ccffcc; background: var(--green-dim); box-shadow: inset 0 0 0 1px var(--green-line); }
 
 .status-pill {
   margin-left: auto; display: flex; align-items: center; gap: 9px;
@@ -99,7 +99,7 @@ nav .tab.active { color: #c8ecdf; background: var(--green-dim); box-shadow: inse
   background: rgba(255,255,255,.02);
 }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .3s; }
-.dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(16,163,127,.55); }
+.dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(51,255,51,.55); }
 .dot.warn { background: var(--warn); }
 .dot.err { background: var(--err); }
 .dot.pulse { animation: pulse 1.2s ease-in-out infinite; }
@@ -116,7 +116,7 @@ main { flex: 1; overflow: hidden; position: relative; z-index: 1; }
 .muted { color: var(--muted); font-weight: 400; }
 .small { font-size: 12px; }
 .mt { margin-top: 18px; display: block; }
-code { background: rgba(255,255,255,.06); padding: 1px 6px; border-radius: 5px; font-size: 12px; font-family: var(--mono); color: #9fe8d3; }
+code { background: rgba(255,255,255,.06); padding: 1px 6px; border-radius: 5px; font-size: 12px; font-family: var(--mono); color: #8dffab; }
 .empty { color: var(--muted); font-size: 12.5px; }
 
 /* ---------- 问答 ---------- */
@@ -166,8 +166,8 @@ button {
 }
 button:hover { border-color: var(--green-line); background: var(--green-dim); }
 button:active { transform: scale(.97); }
-button.primary { background: var(--green); border-color: transparent; color: #04120d; font-weight: 600; }
-button.primary:hover { background: #12b28a; }
+button.primary { background: var(--green); border-color: transparent; color: #041804; font-weight: 600; }
+button.primary:hover { background: #5cff5c; }
 button:disabled { opacity: .45; cursor: default; }
 .btn-sub { display: none; }
 
@@ -184,7 +184,7 @@ button:disabled { opacity: .45; cursor: default; }
 .source:hover { transform: translateY(-1px); border-color: var(--green-line); background: var(--green-dim); }
 .source::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
   background: var(--green); opacity: .5; }
-.source .path { color: #b8e6d7; word-break: break-all; font-weight: 500; }
+.source .path { color: #a4ffb4; word-break: break-all; font-weight: 500; }
 .source .score { float: right; color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
 .source .sec { color: var(--muted); display: block; margin-top: 3px; font-size: 11.5px; }
 .source .warn { color: var(--warn); font-size: 11.5px; }
@@ -309,3 +309,4 @@ nav .tab, button, .chip, .p-tag, .dot, .status-pill, header .brand { user-select
 .copy-btn { font-size: 11px; padding: 3px 9px; margin-top: 6px; border-radius: 6px;
   color: var(--muted); background: rgba(255,255,255,.04); }
 .copy-btn:hover { color: var(--green); border-color: var(--green-line); }
+
