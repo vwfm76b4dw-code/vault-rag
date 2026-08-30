@@ -134,6 +134,23 @@ python webui.py --server   # 只起服务（远程/调试），默认 http://127
 
 torch 编码线程数默认 10（`RAG_TORCH_THREADS` 可调）；Windows 下所有子进程不弹控制台黑框。
 
+## 打包为 exe
+
+```bash
+pip install pyinstaller
+python -m PyInstaller vault-rag.spec --noconfirm
+# 产物：dist/vault-rag/vault-rag.exe（onedir，整个文件夹即是绿色版）
+```
+
+- 双击 `vault-rag.exe` 打开控制台窗口（无控制台黑框；日志在 `data/webui.log`）
+- **与 MCP/RAG 数据库联动**（任选其一）：
+  1. exe 旁放一个 `data_dir.txt`（内容一行：现有 data/ 目录的绝对路径）
+  2. 把 `vault-rag.exe` 放进本仓库根目录运行（data/include.txt 就用仓库里这套）
+  3. 设环境变量 `RAG_DATA_DIR` 指向现有 data/、`RAG_INCLUDE` 指向 include.txt
+  都不设则为全新自包含模式（产物落 exe 旁边）
+- embedding 模型不打进包（运行时读 HuggingFace 缓存，首台新机器会自动经 hf-mirror 下载）
+- 排除误报：PyInstaller 打包程序常被杀软误报，加入信任即可
+
 ## MCP 集成：rag-obsidian
 
 可与现有 Obsidian FTS 服务器深度融合为 32 工具统一服务：

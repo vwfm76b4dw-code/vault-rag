@@ -13,6 +13,7 @@ import argparse
 import contextlib
 import io
 import socket
+import sys
 import threading
 import time
 import traceback
@@ -28,7 +29,10 @@ from pydantic import BaseModel
 from config import WEBUI_HOST, WEBUI_PORT, VAULT
 import webui_lib as lib
 
-ASSETS = Path(__file__).resolve().parent / "webui_assets"
+if getattr(sys, "frozen", False):
+    ASSETS = Path(sys._MEIPASS) / "webui_assets"      # PyInstaller 解包目录
+else:
+    ASSETS = Path(__file__).resolve().parent / "webui_assets"
 REPO = Path(__file__).resolve().parent
 
 app = FastAPI(title="vault-rag 控制台", docs_url=None, redoc_url=None)
@@ -293,6 +297,14 @@ def main():
     ap.add_argument("--server", action="store_true", help="只起服务，不打开界面")
     ap.add_argument("--port", type=int, default=WEBUI_PORT)
     args = ap.parse_args()
+
+    # 打包态无控制台：stdout/stderr 落到 data/webui.log，报错有迹可循
+    if getattr(sys, "frozen", False) and not sys.stdout.isatty():
+        from config import DATA_DIR
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        log_f = open(DATA_DIR / "webui.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = log_f
+        sys.stderr = log_f
 
     port = _free_port(WEBUI_HOST, args.port)
     url = f"http://{WEBUI_HOST}:{port}"

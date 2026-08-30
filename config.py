@@ -3,17 +3,40 @@
 
 环境变量：
     VAULT_PATH      Obsidian Vault 根目录（默认 ~/Documents/Obsidian Vault）
-    RAG_DATA_DIR    索引产物目录（默认 <仓库>/data）
+    RAG_DATA_DIR    索引产物目录（默认 <BASE_DIR>/data）
     RAG_FTS_DB      外部 Obsidian FTS 库路径（可选，供 relations/weights 读 wikilink）
     HF_ENDPOINT     HuggingFace 镜像（代码内一律 setdefault，不覆盖用户已设值）
+
+BASE_DIR：开发态 = 仓库根；PyInstaller 打包后 = exe 所在目录。
+把 vault-rag.exe 放进仓库目录（或设 RAG_DATA_DIR）即可与 MCP 共用同一套数据库。
 """
 import os
+import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent
+BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else _REPO
 
 VAULT = Path(os.environ.get("VAULT_PATH", str(Path.home() / "Documents" / "Obsidian Vault")))
-DATA_DIR = Path(os.environ.get("RAG_DATA_DIR", str(_REPO / "data")))
+
+
+def _resolve_data_dir() -> Path:
+    """优先级：RAG_DATA_DIR 环境变量 > exe 旁 data_dir.txt 指针（一行路径）> exe旁 data/。"""
+    env = os.environ.get("RAG_DATA_DIR")
+    if env:
+        return Path(env)
+    pointer = BASE_DIR / "data_dir.txt"
+    if pointer.is_file():
+        try:
+            p = Path(pointer.read_text(encoding="utf-8").strip())
+            if p.is_dir():
+                return p
+        except OSError:
+            pass
+    return BASE_DIR / "data"
+
+
+DATA_DIR = _resolve_data_dir()
 
 # ---- 当前主索引（SQLite BLOB 向量，见 indexer_qwen.py）----
 DB_PATH = DATA_DIR / "qwen_rag.db"

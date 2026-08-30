@@ -8,14 +8,36 @@ include.txt 语法见该文件头部注释。匹配器语义：
 - vault 内文件：最后一条命中的规则决定去留（include 收 / exclude 排）
 - 外部 @ 文件：在其规则位置加入，之后出现的 exclude 规则仍可将其排除
 """
+import os
 import re
+import shutil
+import sys
 from pathlib import Path
 
-from config import VAULT
+from config import VAULT, BASE_DIR
 
-INCLUDE_PATH = Path(__file__).parent / "include.txt"
+INCLUDE_PATH = Path(os.environ["RAG_INCLUDE"]) if os.getenv("RAG_INCLUDE") \
+    else BASE_DIR / "include.txt"
 
 Rule = tuple  # ("include"|"exclude", pred) / ("external", abs_path, alias)
+
+
+def ensure_include_file() -> Path:
+    """include.txt 不存在时自举（打包态从随包模板复制，开发态仓库本就有）。"""
+    if INCLUDE_PATH.exists():
+        return INCLUDE_PATH
+    bundled = Path(getattr(sys, "_MEIPASS", "")) / "include.txt" \
+        if getattr(sys, "frozen", False) else None
+    if bundled and bundled.exists():
+        shutil.copy(bundled, INCLUDE_PATH)
+    else:
+        INCLUDE_PATH.write_text(
+            "# vault-rag 索引范围声明（.gitignore 语法）\n"
+            "#   目录规则 'dir/' | 文件 'path/to.md' | 通配 '*.md'（仅根级，跨目录用 '**'）\n"
+            "#   '!排除' | '@绝对路径 as external/别名.md'（vault 外部文件）\n\n"
+            "知识/\n项目/\n研究/\n笔记/\n*.md\n",
+            encoding="utf-8")
+    return INCLUDE_PATH
 
 
 def _glob_to_rx(pat: str) -> str:
@@ -40,6 +62,8 @@ def _glob_to_rx(pat: str) -> str:
 
 
 def parse_rules(text: str | None = None) -> list[Rule]:
+    if text is None:
+        ensure_include_file()
     text = (Path(INCLUDE_PATH).read_text(encoding="utf-8")) if text is None else text
     rules: list[Rule] = []
     for raw in text.splitlines():
