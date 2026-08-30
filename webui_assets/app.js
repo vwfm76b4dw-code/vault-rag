@@ -1,14 +1,40 @@
-/* vault-rag 控制台前端逻辑（无框架，原生 fetch + SSE） */
+/* vault-rag 控制台前端 — 原生 JS，无框架无 CDN（离线可用） */
 "use strict";
 const $ = (id) => document.getElementById(id);
 
-/* ---------- 通用 ---------- */
+/* ================= 跟随光效 ================= */
+(() => {
+  const glow = $("cursor-glow");
+  let tx = innerWidth / 2, ty = innerHeight * .3, x = tx, y = ty;
+  addEventListener("mousemove", (e) => { tx = e.clientX; ty = e.clientY; }, { passive: true });
+  (function loop() {
+    x += (tx - x) * 0.08; y += (ty - y) * 0.08;        // 缓动跟随
+    glow.style.transform = `translate(${x}px, ${y}px)`;
+    requestAnimationFrame(loop);
+  })();
+  // 玻璃卡片聚光边框：把鼠标位置写入卡片局部坐标
+  addEventListener("mousemove", (e) => {
+    for (const c of document.querySelectorAll(".glass")) {
+      const r = c.getBoundingClientRect();
+      if (e.clientX > r.left - 60 && e.clientX < r.right + 60 &&
+          e.clientY > r.top - 60 && e.clientY < r.bottom + 60) {
+        c.style.setProperty("--gx", (e.clientX - r.left) + "px");
+        c.style.setProperty("--gy", (e.clientY - r.top) + "px");
+      }
+    }
+  }, { passive: true });
+})();
+
+/* ================= 通用 ================= */
 async function api(path, opts) {
   const r = await fetch(path, opts);
   if (!r.ok) {
     let detail = r.statusText;
-    try { detail = (await r.json()).detail?.errors?.join("；") || (await r.json())?.detail || detail; }
-    catch (_) { /* keep statusText */ }
+    try {
+      const j = await r.json();
+      detail = (j.detail && j.detail.errors && j.detail.errors.join("；")) ||
+               (typeof j.detail === "string" ? j.detail : detail);
+    } catch (_) {}
     throw new Error(detail);
   }
   return r.json();
@@ -26,11 +52,32 @@ function setMsgAuto(id, text, ok, ms = 4000) {
   setMsg(id, text, ok);
   if (text) setTimeout(() => { if ($(id).textContent === text) $(id).textContent = ""; }, ms);
 }
+/* 极简 markdown：先转义再渲染，杜绝注入 */
+function md(text) {
+  const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const lines = esc.split("\n");
+  let html = "", inList = false;
+  const inline = (s) => s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--cyan)">$1</a>');
+  for (const ln of lines) {
+    const li = ln.match(/^\s*[-*•]\s+(.*)/);
+    const h = ln.match(/^#{1,4}\s+(.*)/);
+    if (li) { if (!inList) { html += "<ul>"; inList = true; } html += `<li>${inline(li[1])}</li>`; continue; }
+    if (inList) { html += "</ul>"; inList = false; }
+    if (h) html += `<p><b style="color:var(--accent)">${inline(h[1])}</b></p>`;
+    else if (ln.trim()) html += `<p>${inline(ln)}</p>`;
+  }
+  if (inList) html += "</ul>";
+  return html;
+}
+const escapeHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/* ---------- 标签页 ---------- */
-document.querySelectorAll("nav .tab").forEach((btn) => {
+/* ================= 标签页 ================= */
+document.querySelectorAll("#tabs .tab").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll("nav .tab").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll("#tabs .tab").forEach((b) => b.classList.remove("active"));
     document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
     $("tab-" + btn.dataset.tab).classList.add("active");
@@ -39,30 +86,35 @@ document.querySelectorAll("nav .tab").forEach((btn) => {
   });
 });
 
-/* ---------- 状态条 ---------- */
+/* ================= 状态条 ================= */
 async function refreshStatus() {
   try {
     const st = await api("/api/status");
-    const dot = document.querySelector("#status-pill .dot");
     const ok = st.consistent;
-    dot.className = "dot " + (ok ? "ok" : "err");
-    $("status-text").textContent =
+    const dotModel = $("dot-model"), dotChat = $("dot-chat");
+    dotModel.className = "dot " + (st.model_ready ? "ok" : "warn pulse");
+    dotModel.title = st.model_ready ? "检索模型已就绪" : "检索模型加载中…（首次约 30 秒）";
+    dotChat.className = "dot " + (st.chat_ready ? "ok" : "err");
+    dotChat.title = st.chat_ready ? "AI 问答已配置" : "AI 问答未配置 key（管理器 → 设置）";
+    document.getElementById("status-text").textContent =
       `${st.notes} 篇 · ${st.chunks} 块 · ${st.db_mb}MB` + (ok ? "" : " · 库不一致!");
     $("status-pill").title =
-      `上次索引: ${st.last_indexed}\n向量: ${st.vectors}\n缓存: ${st.embed_cache}\n` +
-      `问答模型: ${st.chat_model} (${st.chat_ready ? "key已配置" : "未配置key"})\nvault: ${st.vault}`;
+      `上次索引: ${st.last_indexed}\n向量: ${st.vectors} · 缓存: ${st.embed_cache}\n` +
+      `问答: ${st.chat_model} ${st.chat_ready ? "(已配置)" : "(未配置 key)"}\nvault: ${st.vault}`;
+    // 发送按钮副标签：模型没就绪时给出明确预期
+    $("send-sub").textContent = st.model_ready ? "" : "模型加载中…";
   } catch (e) {
-    document.querySelector("#status-pill .dot").className = "dot err";
-    $("status-text").textContent = "后端离线";
+    $("dot-model").className = "dot err";
+    document.getElementById("status-text").textContent = "后端离线";
   }
 }
 
-/* ---------- 问答 ---------- */
+/* ================= 问答 ================= */
 function addMsg(role, text) {
   const div = document.createElement("div");
   div.className = "msg " + role;
   div.innerHTML = `<div class="bubble"></div>`;
-  div.querySelector(".bubble").textContent = text;
+  if (text) div.querySelector(".bubble").innerHTML = md(text);
   $("chat-log").appendChild(div);
   $("chat-log").scrollTop = $("chat-log").scrollHeight;
   return div.querySelector(".bubble");
@@ -70,24 +122,25 @@ function addMsg(role, text) {
 
 function renderSources(results) {
   $("sources-count").textContent = results.length ? `(${results.length})` : "";
-  $("sources-list").innerHTML = "";
+  const box = $("sources-list");
+  box.innerHTML = "";
   if (!results.length) {
-    $("sources-list").innerHTML = `<span class="muted">无来源</span>`;
+    box.innerHTML = `<span class="empty">无来源</span>`;
     return;
   }
   results.forEach((s, i) => {
     const d = document.createElement("div");
-    d.className = "source";
+    d.className = "source glass";
     d.title = "点击打开原文";
     d.innerHTML =
       `<span class="score">${s.score?.toFixed(3) ?? ""}</span>` +
-      `<b>[${i + 1}]</b> <span class="path">${s.rel_path}</span>` +
-      (s.section ? `<span class="sec">${s.section}</span>` : "") +
+      `<b>[${i + 1}]</b> <span class="path">${escapeHtml(s.rel_path)}</span>` +
+      (s.section ? `<span class="sec">${escapeHtml(s.section).slice(0, 120)}</span>` : "") +
       (s.superseded ? `<span class="warn">⚠ 已被更新版本取代</span>` : "");
     d.addEventListener("click", () => {
       post("/api/open", { rel_path: s.rel_path }).catch((e) => alert("打开失败: " + e.message));
     });
-    $("sources-list").appendChild(d);
+    box.appendChild(d);
   });
 }
 
@@ -102,19 +155,20 @@ async function sendChat(searchOnly) {
   $("chat-input").value = "";
   addMsg("user", q);
   setBusy(true);
-  const bubble = addMsg("assistant", searchOnly ? "检索中…" : "思考中…");
-  const cursor = document.createElement("span");
-  cursor.className = "stream-cursor";
+  const bubble = addMsg("assistant");
+  bubble.innerHTML = `<p class="muted">${searchOnly ? "检索中" : "检索并思考中"}<span class="stream-caret"></span></p>`;
+  const caret = `<span class="stream-caret"></span>`;
   let acc = "";
 
   try {
     if (searchOnly) {
       const out = await post("/api/search", { q, k: 8 });
       renderSources(out.results);
-      bubble.textContent = out.results.length
-        ? `检索到 ${out.results.length} 条相关内容（见右侧来源，点击可打开原文）。`
-        : "没有检索到相关内容。";
-      if (out.mode.startsWith("keyword")) bubble.textContent += "\n⚠ " + out.mode;
+      bubble.innerHTML = out.results.length
+        ? md(`检索到 **${out.results.length}** 条相关内容（右侧来源，点击可打开原文）。`)
+        : md("没有检索到相关内容。");
+      if (out.mode.startsWith("keyword"))
+        bubble.innerHTML += `<span class="fallback-note">⚠ ${escapeHtml(out.mode)}</span>`;
     } else {
       const r = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -133,32 +187,34 @@ async function sendChat(searchOnly) {
           const line = buf.slice(0, idx).trim();
           buf = buf.slice(idx + 2);
           if (!line.startsWith("data:")) continue;
-          const ev = JSON.parse(line.slice(5));
+          let ev;
+          try { ev = JSON.parse(line.slice(5)); } catch (_) { continue; }
           if (ev.type === "sources") {
             renderSources(ev.results);
           } else if (ev.type === "delta") {
             acc += ev.text;
-            bubble.innerHTML = "";
-            bubble.textContent = acc;
-            bubble.appendChild(cursor);
+            bubble.innerHTML = md(acc) + caret;
             $("chat-log").scrollTop = $("chat-log").scrollHeight;
           } else if (ev.type === "warning") {
             acc += `\n\n⚠ ${ev.message}`;
-            bubble.textContent = acc;
+            bubble.innerHTML = md(acc);
           } else if (ev.type === "fallback") {
             renderSources(ev.results);
-            bubble.textContent = `⚠ AI 生成不可用：${ev.message}\n\n以下为本地检索结果（右侧可打开原文）：`;
+            bubble.innerHTML =
+              `<span class="fallback-note">⚠ AI 生成不可用：${escapeHtml(ev.message)}<br>` +
+              `→ 在「管理器 → 设置」粘贴 Agnes key 即可启用回答；当前展示本地检索结果。</span>` +
+              md("以下为本地检索结果（右侧可打开原文）：");
           } else if (ev.type === "error") {
-            bubble.textContent = (acc || "") + `\n\n✗ 出错: ${ev.message}`;
+            bubble.innerHTML = md(acc || "") + `<span class="fallback-note">✗ 出错: ${escapeHtml(ev.message)}</span>`;
           }
         }
       }
-      if (!acc && bubble.textContent === "思考中…") bubble.textContent = "(无返回)";
+      if (!acc && bubble.textContent.includes("检索并思考中"))
+        bubble.innerHTML = `<span class="fallback-note">(无返回)</span>`;
     }
   } catch (e) {
-    bubble.textContent = `✗ 请求失败: ${e.message}`;
+    bubble.innerHTML = `<span class="fallback-note">✗ 请求失败: ${escapeHtml(e.message)}</span>`;
   } finally {
-    cursor.remove();
     setBusy(false);
     $("chat-log").scrollTop = $("chat-log").scrollHeight;
   }
@@ -168,54 +224,68 @@ $("btn-search-only").addEventListener("click", () => sendChat(true));
 $("chat-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(false); }
 });
+document.querySelectorAll(".chip").forEach((c) =>
+  c.addEventListener("click", () => { $("chat-input").value = c.textContent; sendChat(false); }));
 
-/* ---------- 看板 ---------- */
+/* ================= 看板 ================= */
+function countUp(el, target) {
+  const t0 = performance.now(), dur = 850;
+  (function step(t) {
+    const p = Math.min(1, (t - t0) / dur);
+    el.textContent = Math.round(target * (1 - Math.pow(1 - p, 3))).toLocaleString();
+    if (p < 1) requestAnimationFrame(step);
+  })(t0);
+}
 async function loadBoard() {
   try {
     const [st, d] = await Promise.all([api("/api/status"), api("/api/dashboard")]);
     const cards = [
       ["笔记", st.notes, ""], ["文本块", st.chunks, ""],
       ["向量", st.vectors, st.consistent ? "" : "与文本块不一致!"],
-      ["待索引", d.pending < 0 ? "?" : d.pending, d.pending > 0 ? "有新内容" : ""],
+      ["待索引", d.pending < 0 ? 0 : d.pending, d.pending > 0 ? "有新内容" : ""],
       ["embed 缓存", st.embed_cache, ""],
       ["被取代文档", d.superseded_total, ""],
     ];
-    $("cards").innerHTML = cards.map(([lbl, num, err]) =>
-      `<div class="card ${err ? "bad" : ""}"><div class="num">${num}</div>` +
-      `<div class="lbl">${lbl}${err ? " · " + err : ""}</div></div>`).join("");
+    $("cards").innerHTML = cards.map(([lbl, num, err], i) =>
+      `<div class="card glass ${err ? "bad" : ""}" style="animation:fadeup .4s ${i * 0.05}s both">` +
+      `<div class="num">0</div><div class="lbl">${lbl}${err ? " · " + err : ""}</div></div>`).join("");
+    document.querySelectorAll("#cards .num").forEach((el, i) => countUp(el, cards[i][1]));
 
     const maxN = Math.max(1, ...d.domains.map((x) => x.notes));
     $("domains").innerHTML = d.domains.map((x) =>
-      `<div class="bar-row"><div class="bar-lbl"><b title="${x.domain}">${x.domain}</b>` +
+      `<div class="bar-row"><div class="bar-lbl"><b title="${escapeHtml(x.domain)}">${escapeHtml(x.domain)}</b>` +
       `<span class="muted">${x.notes} 篇 / ${x.chunks} 块</span></div>` +
-      `<div class="bar"><div style="width:${(x.notes / maxN * 100).toFixed(1)}%"></div></div></div>`
-    ).join("") || `<span class="muted">索引为空</span>`;
+      `<div class="bar"><div data-w="${(x.notes / maxN * 100).toFixed(1)}"></div></div></div>`
+    ).join("") || `<span class="empty">索引为空</span>`;
+    requestAnimationFrame(() =>
+      document.querySelectorAll("#domains .bar > div").forEach(
+        (b) => b.style.width = b.dataset.w + "%"));
 
     const edgeNames = { supersedes: "版本取代", sibling_next: "时序链", complements: "跨簇互补", references: "wikilink" };
+    $("edges-hint").textContent = st.relations_built ? "" : "（relations.db 未构建）";
     const edgeKeys = Object.keys(d.edges);
-    $("edges-hint").textContent = st.relations_built ? "" : "（relations.db 未构建，跑 relations.py build）";
     $("edges").innerHTML = edgeKeys.length
       ? edgeKeys.map((k) => `<div class="row"><span>${edgeNames[k] || k}</span><span>${d.edges[k]}</span></div>`).join("")
-      : `<span class="muted">暂无关系边</span>`;
+      : `<span class="empty">暂无关系边</span>`;
 
-    $("weights-hint").textContent = st.weights_built ? "" : "（weights.db 未构建，跑 weight_v2.py）";
+    $("weights-hint").textContent = st.weights_built ? "" : "（weights.db 未构建）";
     $("weights").innerHTML = d.weights.length
-      ? d.weights.map((w) => `<div class="row"><span title="${w.rel_path}">${w.rel_path}</span><span>${w.computed}</span></div>`).join("")
-      : `<span class="muted">暂无权重数据</span>`;
+      ? d.weights.map((w) => `<div class="row"><span title="${escapeHtml(w.rel_path)}">${escapeHtml(w.rel_path)}</span><span>${w.computed}</span></div>`).join("")
+      : `<span class="empty">暂无权重数据</span>`;
 
     $("recent").innerHTML = d.recent.length
-      ? d.recent.map((r) => `<div class="row"><a data-path="${r.rel_path}" title="${r.rel_path}">${r.rel_path}</a>` +
-          `<span class="time">${r.mtime_str}</span></div>`).join("")
-      : `<span class="muted">暂无</span>`;
+      ? d.recent.map((r) => `<div class="row"><a data-path="${escapeHtml(r.rel_path)}" title="${escapeHtml(r.rel_path)}">${escapeHtml(r.rel_path)}</a>` +
+          `<span class="time muted">${r.mtime_str}</span></div>`).join("")
+      : `<span class="empty">暂无</span>`;
     $("recent").querySelectorAll("a").forEach((a) =>
       a.addEventListener("click", () =>
         post("/api/open", { rel_path: a.dataset.path }).catch((e) => alert(e.message))));
   } catch (e) {
-    $("cards").innerHTML = `<div class="card bad"><div class="num">✗</div><div class="lbl">${e.message}</div></div>`;
+    $("cards").innerHTML = `<div class="card glass bad"><div class="num">✗</div><div class="lbl">${escapeHtml(e.message)}</div></div>`;
   }
 }
 
-/* ---------- 管理器 ---------- */
+/* ================= 管理器 ================= */
 async function loadManage() {
   try {
     const s = await api("/api/scope");
@@ -226,8 +296,8 @@ async function loadManage() {
     const cfg = await api("/api/settings");
     $("endpoint-info").innerHTML =
       `<div class="row"><span class="muted">Key</span><span>${cfg.key_set ? "✓ 已配置" : "✗ 未配置"}</span></div>` +
-      `<div class="row"><span class="muted">模型</span><span>${cfg.model}</span></div>` +
-      `<div class="row"><span class="muted">端点</span><span style="font-size:11px">${cfg.endpoint}</span></div>`;
+      `<div class="row"><span class="muted">模型</span><span>${escapeHtml(cfg.model)}</span></div>` +
+      `<div class="row"><span class="muted">端点</span><span style="font-size:11px;word-break:break-all">${escapeHtml(cfg.endpoint)}</span></div>`;
     pollIndex();
   } catch (e) { setMsg("scope-msg", e.message, false); }
 }
@@ -290,14 +360,14 @@ function pollIndex() {
         $("index-log").scrollTop = $("index-log").scrollHeight;
       } else {
         state.textContent = `待索引 ${st.pending < 0 ? "?" : st.pending} 篇` +
-          (st.finished ? ` · 上次 ${st.ok === false ? "✗失败" : "✓完成"} ${st.log ? "" : ""}` : "");
+          (st.finished ? ` · 上次${st.ok === false ? " ✗失败" : " ✓完成"}` : "");
         if (st.log) {
           $("index-log").className = "log";
           $("index-log").textContent = st.log;
           $("index-log").scrollTop = $("index-log").scrollHeight;
         }
       }
-    } catch (_) { /* 忽略轮询错误 */ }
+    } catch (_) {}
   };
   tick();
   pollTimer = setInterval(tick, 2000);
@@ -306,7 +376,7 @@ function pollIndex() {
 $("btn-index").addEventListener("click", async () => {
   try {
     const r = await post("/api/index/refresh", {});
-    setMsgAuto("index-state", r.ok ? r.message : r.message, r.ok);
+    setMsgAuto("index-state", r.message, r.ok);
     pollIndex();
   } catch (e) { alert(e.message); }
 });
@@ -322,7 +392,7 @@ $("btn-key-save").addEventListener("click", async () => {
   } catch (e) { setMsg("key-msg", e.message, false); }
 });
 
-/* ---------- 启动 ---------- */
+/* ================= 启动 ================= */
 refreshStatus();
-setInterval(refreshStatus, 15000);
-loadManage();      // 默认页是问答，但管理器状态先拉一次
+setInterval(refreshStatus, 10000);
+loadManage();

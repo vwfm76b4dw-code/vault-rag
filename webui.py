@@ -59,7 +59,13 @@ def index():
 
 @app.get("/api/status")
 def api_status():
-    return lib.status()
+    st = lib.status()
+    try:
+        import search
+        st["model_ready"] = search._MODEL is not None
+    except Exception:
+        st["model_ready"] = False
+    return st
 
 
 @app.get("/api/dashboard")
@@ -281,14 +287,22 @@ def api_index_status():
 # ---------------- 启动 ----------------
 
 def _free_port(host: str, port: int) -> int:
-    if port > 0:
+    """优先用配置端口；被占则向后顺延找空闲（避免二开实例静默退出）。"""
+    for p in range(port, port + 10):
         with socket.socket() as s:
-            if s.connect_ex((host, port)) != 0:
-                return port                  # 未被占用
-        raise SystemExit(f"端口 {port} 已被占用（RAG_WEBUI_PORT 可改）")
-    with socket.socket() as s:
-        s.bind((host, 0))
-        return s.getsockname()[1]
+            if s.connect_ex((host, p)) != 0:
+                return p
+    raise SystemExit(f"端口 {port}~{port+9} 均被占用（RAG_WEBUI_PORT 可指定）")
+
+
+def _preload_model():
+    """启动即后台预载 embedding 模型：首次检索不再白等 20~40 秒。"""
+    try:
+        import search
+        search.load_model()
+        print("[webui] embedding 模型预载完成", flush=True)
+    except Exception as e:                      # 模型缺失不阻塞界面，检索时降级
+        print(f"[webui] 模型预载失败（检索时将尝试关键词兜底）: {e}", flush=True)
 
 
 def main():
@@ -318,6 +332,8 @@ def main():
             if s.connect_ex((WEBUI_HOST, port)) == 0:
                 break
         time.sleep(0.1)
+    threading.Thread(target=_preload_model, name="model-preload",
+                     daemon=True).start()
 
     if args.server:
         print(f"[webui] 服务运行中 {url} （Ctrl+C 退出）")
@@ -343,6 +359,11 @@ def main():
         except KeyboardInterrupt:
             pass
 
-
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit as e:                  # 窗口态没有控制台，致命错误弹原生框
+        if getattr(sys, "frozen", False):
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, str(e), "vault-rag 控制台", 0x10)
+        raise

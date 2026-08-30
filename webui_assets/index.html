@@ -3,44 +3,67 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>vault-rag 控制台</title>
+<title>vault-rag · 控制台</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+<!-- 氛围层：极光 + 噪点 + 鼠标跟随光斑 -->
+<div class="aurora" aria-hidden="true">
+  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+</div>
+<div class="grain" aria-hidden="true"></div>
+<div id="cursor-glow" aria-hidden="true"></div>
+
 <header>
   <div class="brand">
-    <span class="logo">◈</span>
-    <span class="title">vault-rag <em>控制台</em></span>
+    <span class="logo"><svg viewBox="0 0 24 24" width="22" height="22"><defs>
+      <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#22d3ee"/>
+      </linearGradient></defs>
+      <path fill="url(#lg)" d="M12 1l9 5.2v10.4L12 22l-9-5.4V6.2z" opacity=".9"/>
+      <path fill="#0b0b12" d="M12 5.2l5.4 3.1v6.2L12 17.6l-5.4-3.1V8.3z"/>
+      <circle cx="12" cy="11.4" r="2" fill="url(#lg)"/>
+    </svg></span>
+    <span class="title">vault-rag<em>·控制台</em></span>
   </div>
-  <nav>
-    <button class="tab active" data-tab="chat">问答</button>
-    <button class="tab" data-tab="board">看板</button>
-    <button class="tab" data-tab="manage">管理器</button>
+  <nav id="tabs">
+    <button class="tab active" data-tab="chat">✦ 问答</button>
+    <button class="tab" data-tab="board">▦ 看板</button>
+    <button class="tab" data-tab="manage">⚙ 管理器</button>
   </nav>
-  <div class="status-pill" id="status-pill" title="加载中…"><span class="dot"></span><span id="status-text">连接中</span></div>
+  <div class="status-pill" id="status-pill">
+    <span class="dot" id="dot-model" title="检索模型"></span>
+    <span class="dot" id="dot-chat" title="AI 问答"></span>
+    <span id="status-text">连接中…</span>
+  </div>
 </header>
 
 <main>
   <!-- ============ 问答 ============ -->
   <section id="tab-chat" class="panel active">
-    <div class="chat-wrap">
+    <div class="chat-wrap glass">
       <div id="chat-log" class="chat-log">
         <div class="msg assistant"><div class="bubble">
-          问点什么吧 — 检索本地知识库后由 AI 生成回答，来源可追溯。<br>
-          <small>纯检索（不生成）可用下方「仅检索」；AI 回答需要 Agnes key（管理器 → 设置）。</small>
+          <p>你的知识库已就绪。提问后我会检索本地笔记并生成带引用的回答。</p>
+          <p class="muted small">发送 = 检索 + AI 生成 · 仅检索 = 只看来源 · 点击来源卡可打开原文</p>
         </div></div>
       </div>
+      <div class="chips" id="chips">
+        <button class="chip">agent 怎么防遗忘</button>
+        <button class="chip">RAG 索引有哪些坑</button>
+        <button class="chip">本地模型部署方案对比</button>
+      </div>
       <div class="chat-input-row">
-        <textarea id="chat-input" rows="2" placeholder="例如：agent 怎么防遗忘？  （Enter 发送 / Shift+Enter 换行）"></textarea>
+        <textarea id="chat-input" rows="2" placeholder="向知识库提问…  (Enter 发送 / Shift+Enter 换行)"></textarea>
         <div class="chat-actions">
-          <button id="btn-send" class="primary">发送</button>
+          <button id="btn-send" class="primary">发送<span class="btn-sub" id="send-sub"></span></button>
           <button id="btn-search-only">仅检索</button>
         </div>
       </div>
     </div>
-    <aside id="sources-panel" class="sources-panel">
-      <h3>来源 <span id="sources-count" class="muted"></span></h3>
-      <div id="sources-list" class="muted">回答后显示引用来源</div>
+    <aside class="sources-panel glass">
+      <h3><span class="h-ico">◈</span> 来源 <span id="sources-count" class="muted"></span></h3>
+      <div id="sources-list" class="empty">回答后显示引用来源</div>
     </aside>
   </section>
 
@@ -48,17 +71,17 @@
   <section id="tab-board" class="panel">
     <div class="cards" id="cards"></div>
     <div class="board-grid">
-      <div class="board-card">
+      <div class="board-card glass">
         <h3>领域分布</h3>
         <div id="domains" class="bars"></div>
       </div>
-      <div class="board-card">
-        <h3>知识关系图 <span class="muted" id="edges-hint"></span></h3>
+      <div class="board-card glass">
+        <h3>知识关系图 <span class="muted small" id="edges-hint"></span></h3>
         <div id="edges" class="kv"></div>
-        <h3 class="mt">权重榜 Top 8 <span class="muted" id="weights-hint"></span></h3>
+        <h3 class="mt">权重榜 Top 8 <span class="muted small" id="weights-hint"></span></h3>
         <div id="weights" class="kv"></div>
       </div>
-      <div class="board-card">
+      <div class="board-card glass">
         <h3>最近索引的笔记</h3>
         <div id="recent" class="list"></div>
       </div>
@@ -68,7 +91,7 @@
   <!-- ============ 管理器 ============ -->
   <section id="tab-manage" class="panel">
     <div class="manage-grid">
-      <div class="board-card">
+      <div class="board-card glass">
         <h3>索引范围 include.txt</h3>
         <textarea id="scope-text" class="code" rows="16" spellcheck="false"></textarea>
         <div class="row">
@@ -76,7 +99,7 @@
           <span id="scope-msg" class="msg"></span>
         </div>
       </div>
-      <div class="board-card">
+      <div class="board-card glass">
         <h3>添加外部文件（@ 规则）</h3>
         <div class="row"><input id="ext-path" placeholder="C:\path\to\file.md 绝对路径">
           <button id="btn-browse">浏览…</button></div>
@@ -96,11 +119,11 @@
         <h3 class="mt">增量索引</h3>
         <div class="row">
           <button id="btn-index" class="primary">开始增量索引</button>
-          <span id="index-state" class="muted"></span>
+          <span id="index-state" class="muted small"></span>
         </div>
         <pre id="index-log" class="log">（空闲）</pre>
       </div>
-      <div class="board-card">
+      <div class="board-card glass">
         <h3>设置</h3>
         <p class="muted small">AI 问答的 API key（OpenAI 兼容端点）。保存到本地
           <code>data/_local_settings.json</code>（已被 gitignore，不入库）。</p>

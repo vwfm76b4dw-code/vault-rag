@@ -294,7 +294,7 @@ def pending_count() -> int:
 # ---------- 内容管理 ----------
 
 def read_scope_text() -> str:
-    return scopes.INCLUDE_PATH.read_text(encoding="utf-8")
+    return scopes.ensure_include_file().read_text(encoding="utf-8")
 
 
 def validate_scope_text(text: str) -> list[str]:
