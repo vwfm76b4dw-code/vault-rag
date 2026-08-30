@@ -112,5 +112,42 @@ class TestCreateNote(unittest.TestCase):
                 webui_lib.VAULT = orig
 
 
+class TestEmbedBackend(unittest.TestCase):
+    """查询向量策略：默认 HTTP 端点优先（零本地模型加载），离线抛 EmbedUnavailable。"""
+
+    def test_http_first_and_offline_raises(self):
+        import threading, json as _json
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        import numpy as _np
+
+        class H(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                v = _np.zeros(4, dtype=_np.float32); v[0] = 1
+                body = _json.dumps({"data": [{"embedding": v.tolist()}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def log_message(self, *a): pass
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        import search
+        orig = (search.EMBED_HTTP_URL, search.EMBED_BACKEND)
+        search.EMBED_HTTP_URL = f"http://127.0.0.1:{srv.server_port}/v1/embeddings"
+        search.EMBED_BACKEND = "http"
+        try:
+            v = search.embed_query("测试")            # 在线 → HTTP 向量
+            self.assertEqual(v.argmax(), 0)
+            search.EMBED_HTTP_URL = "http://127.0.0.1:1/v1/embeddings"
+            with self.assertRaises(search.EmbedUnavailable):
+                search.embed_query("测试")             # 离线 → 明确抛错（调用方关键词兜底）
+        finally:
+            search.EMBED_HTTP_URL, search.EMBED_BACKEND = orig
+            srv.shutdown()
+
+
 if __name__ == "__main__":
     unittest.main()

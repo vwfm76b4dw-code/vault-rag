@@ -91,18 +91,20 @@ async function refreshStatus() {
   try {
     const st = await api("/api/status");
     const ok = st.consistent;
-    const dotModel = $("dot-model"), dotChat = $("dot-chat");
-    dotModel.className = "dot " + (st.model_ready ? "ok" : "warn pulse");
-    dotModel.title = st.model_ready ? "检索模型已就绪" : "检索模型加载中…（首次约 30 秒）";
+    const dotEmbed = $("dot-model"), dotChat = $("dot-chat");
+    dotEmbed.className = "dot " + (st.embed_ready ? "ok" : "warn pulse");
+    dotEmbed.title = st.embed_ready
+      ? "语义检索端点在线（LM Studio）"
+      : "语义检索端点离线 → 已用关键词检索；启动 LM Studio (1234) 恢复语义检索";
     dotChat.className = "dot " + (st.chat_ready ? "ok" : "err");
-    dotChat.title = st.chat_ready ? "AI 问答已配置" : "AI 问答未配置 key（管理器 → 设置）";
+    dotChat.title = st.chat_ready ? "AI 问答已配置（云端生成）" : "AI 问答未配置 key（管理器 → 设置）";
     document.getElementById("status-text").textContent =
       `${st.notes} 篇 · ${st.chunks} 块 · ${st.db_mb}MB` + (ok ? "" : " · 库不一致!");
     $("status-pill").title =
       `上次索引: ${st.last_indexed}\n向量: ${st.vectors} · 缓存: ${st.embed_cache}\n` +
+      `检索向量: ${st.embed_url} ${st.embed_ready ? "(在线)" : "(离线→关键词)"}\n` +
       `问答: ${st.chat_model} ${st.chat_ready ? "(已配置)" : "(未配置 key)"}\nvault: ${st.vault}`;
-    // 发送按钮副标签：模型没就绪时给出明确预期
-    $("send-sub").textContent = st.model_ready ? "" : "模型加载中…";
+    $("send-sub").textContent = "";
   } catch (e) {
     $("dot-model").className = "dot err";
     document.getElementById("status-text").textContent = "后端离线";

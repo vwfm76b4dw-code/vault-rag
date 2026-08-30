@@ -60,11 +60,12 @@ def index():
 @app.get("/api/status")
 def api_status():
     st = lib.status()
+    st["embed_ready"] = embed_endpoint_alive()
     try:
-        import search
-        st["model_ready"] = search._MODEL is not None
+        from config import API_URL
+        st["embed_url"] = API_URL
     except Exception:
-        st["model_ready"] = False
+        st["embed_url"] = ""
     return st
 
 
@@ -108,11 +109,12 @@ def api_chat(req: ChatReq):
         try:
             with _EMBED_LOCK:
                 hits = lib.retrieve(req.q.strip(), top_k=req.k)
-        except Exception as e:
-            hits, warn = [], f"embedding 检索不可用（{type(e).__name__}），尝试关键词兜底"
+        except Exception:
             with _EMBED_LOCK:
                 hits = lib.keyword_fallback(req.q.strip(), top_k=req.k)
-            yield _sse({"type": "warning", "message": warn})
+            yield _sse({"type": "warning",
+                        "message": "embedding 端点离线（LM Studio 1234 未启动）→ 已自动切换关键词检索，"
+                                   "启动 LM Studio 后恢复语义检索"})
         yield _sse({"type": "sources", "results": [
             {"score": round(h["score"], 4), "rel_path": h["rel_path"],
              "section": h.get("section") or "", "superseded": h.get("superseded", False)}
@@ -295,14 +297,25 @@ def _free_port(host: str, port: int) -> int:
     raise SystemExit(f"端口 {port}~{port+9} 均被占用（RAG_WEBUI_PORT 可指定）")
 
 
-def _preload_model():
-    """启动即后台预载 embedding 模型：首次检索不再白等 20~40 秒。"""
+_EMBED_PROBE: dict = {"t": 0.0, "ok": False}
+# 查询侧零本地模型：检索向量走 HTTP 端点（LM Studio 1234），离线自动关键词兜底；
+# 本地 torch 只在"增量索引/新增内容"时由 indexer_qwen 加载。
+
+
+def embed_endpoint_alive() -> bool:
+    """探测检索向量端点（结果缓存 8 秒，避免状态轮询打爆端点）。"""
+    if time.time() - _EMBED_PROBE["t"] < 8:
+        return _EMBED_PROBE["ok"]
+    import requests
+    ok = False
     try:
-        import search
-        search.load_model()
-        print("[webui] embedding 模型预载完成", flush=True)
-    except Exception as e:                      # 模型缺失不阻塞界面，检索时降级
-        print(f"[webui] 模型预载失败（检索时将尝试关键词兜底）: {e}", flush=True)
+        from config import API_URL, MODEL
+        r = requests.post(API_URL, json={"model": MODEL, "input": ["alive"]}, timeout=2)
+        ok = r.status_code == 200
+    except Exception:
+        ok = False
+    _EMBED_PROBE.update({"t": time.time(), "ok": ok})
+    return ok
 
 
 def main():
@@ -332,8 +345,7 @@ def main():
             if s.connect_ex((WEBUI_HOST, port)) == 0:
                 break
         time.sleep(0.1)
-    threading.Thread(target=_preload_model, name="model-preload",
-                     daemon=True).start()
+    # 查询侧零模型加载（向量走 HTTP 端点）；本地 torch 仅在增量索引时按需加载
 
     if args.server:
         print(f"[webui] 服务运行中 {url} （Ctrl+C 退出）")

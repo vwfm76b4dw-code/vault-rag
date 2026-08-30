@@ -22,9 +22,15 @@ import sys
 import numpy as np
 
 from config import DB_PATH, MODEL_NAME_QWEN, DIM, TOP_K, QUERY_INSTRUCTION, TORCH_THREADS
+from config import API_URL as EMBED_HTTP_URL, MODEL as EMBED_HTTP_MODEL
 
 MAX_LEN = 512
 EXCLUDE_PATTERNS = ["%.codex/%"]   # 排除系统目录
+
+# 查询向量来源：'http'=HTTP 端点优先（不加载本地模型，默认）
+#               'local'=强制本地 torch；'auto'=端点失败退本地
+EMBED_BACKEND = os.environ.get("RAG_EMBED_BACKEND", "http")
+EMBED_HTTP_TIMEOUT = float(os.environ.get("RAG_EMBED_HTTP_TIMEOUT", "5"))
 
 # 缓存上限（字节），超过则退化为每次现读。可用 RAG_VEC_CACHE_MB 调整（0=禁用）。
 _CACHE_MAX_BYTES = int(os.environ.get("RAG_VEC_CACHE_MB", "2048")) * 1024 * 1024
@@ -34,8 +40,24 @@ _MODEL = None
 _TOKENIZER = None
 
 
+class EmbedUnavailable(Exception):
+    """查询向量不可得（HTTP 端点离线且未启用本地回退）→ 调用方走关键词检索。"""
+
+
+def embed_query_http(query: str) -> np.ndarray:
+    """经 OpenAI 兼容端点（LM Studio 1234）取查询向量，同模型同指令前缀，向量与库内兼容。"""
+    import requests
+    r = requests.post(
+        EMBED_HTTP_URL,
+        json={"model": EMBED_HTTP_MODEL, "input": [QUERY_INSTRUCTION + query]},
+        timeout=(2, EMBED_HTTP_TIMEOUT))
+    r.raise_for_status()
+    v = np.asarray(r.json()["data"][0]["embedding"], dtype=np.float32)
+    return v / max(float(np.linalg.norm(v)), 1e-9)
+
+
 def load_model():
-    """加载查询侧模型（进程内只加载一次；import 本模块不触发）。"""
+    """加载本地查询模型（仅 RAG_EMBED_BACKEND=local/auto 或索引器使用；import 不触发）。"""
     global _MODEL, _TOKENIZER
     if _MODEL is not None:
         return _MODEL, _TOKENIZER
@@ -51,14 +73,13 @@ def load_model():
     return model, tokenizer
 
 
-def _last_token_pool(last_hidden: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+def _last_token_pool(last_hidden, attention_mask):
     seq_len = attention_mask.sum(dim=1) - 1
     idx = seq_len.view(-1, 1, 1).expand(-1, 1, last_hidden.size(-1))
     return last_hidden.gather(1, idx).squeeze(1)
 
 
-def embed_query(query: str) -> np.ndarray:
-    """查询侧：instruction 前缀 + last-token pooling + L2 归一化（与索引器一致）。"""
+def embed_query_local(query: str) -> np.ndarray:
     import torch
     model, tok = load_model()
     text = QUERY_INSTRUCTION + query
@@ -69,6 +90,18 @@ def embed_query(query: str) -> np.ndarray:
         emb = _last_token_pool(outputs.last_hidden_state, inputs["attention_mask"])
         emb = torch.nn.functional.normalize(emb, p=2, dim=1)
         return emb.numpy().astype(np.float32)[0]
+
+
+def embed_query(query: str) -> np.ndarray:
+    """查询向量：默认 HTTP 端点（本地零模型加载）；端点失败按 backend 策略处理。"""
+    if EMBED_BACKEND != "local":
+        try:
+            return embed_query_http(query)
+        except Exception as e:
+            if EMBED_BACKEND == "http":
+                raise EmbedUnavailable(
+                    f"embedding 端点 {EMBED_HTTP_URL} 不可用（{type(e).__name__}）") from e
+    return embed_query_local(query)
 
 
 def _db_stamp() -> tuple:
