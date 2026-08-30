@@ -9,10 +9,10 @@
   --line2: rgba(255, 255, 255, 0.13);
   --fg: #ececf1;
   --muted: #8f9a94;
-  --green: #19c39c;           /* 主强调：GPT 绿（提亮适配纯黑） */
-  --green-deep: #0e8a6f;
-  --green-dim: rgba(25, 195, 156, 0.14);
-  --green-line: rgba(25, 195, 156, 0.45);
+  --green: #10a37f;           /* 主强调：GPT 深绿 */
+  --green-deep: #0b7a61;
+  --green-dim: rgba(16, 163, 127, 0.15);
+  --green-line: rgba(16, 163, 127, 0.5);
   --warn: #d9a04a;
   --err: #e06c5f;
   --radius: 12px;
@@ -27,15 +27,15 @@ body {
 }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
-::-webkit-scrollbar-thumb:hover { background: rgba(25,195,156,.45); background-clip: content-box; border: 2px solid transparent; }
-::selection { background: rgba(25,195,156,.32); }
+::-webkit-scrollbar-thumb:hover { background: rgba(16,163,127,.45); background-clip: content-box; border: 2px solid transparent; }
+::selection { background: rgba(16,163,127,.32); }
 
 /* ---------- 背景：近黑微绿氛围 ---------- */
 .aurora { position: fixed; inset: -20%; z-index: -3; filter: blur(120px); opacity: .16; }
 .blob { position: absolute; border-radius: 50%; will-change: transform; }
-.b1 { width: 44vw; height: 44vw; left: -8%;  top: -14%; background: radial-gradient(circle, #123b31 0%, transparent 65%); animation: drift1 34s ease-in-out infinite alternate; }
-.b2 { width: 38vw; height: 38vw; right: -10%; top: 16%;  background: radial-gradient(circle, #17323a 0%, transparent 65%); animation: drift2 40s ease-in-out infinite alternate; }
-.b3 { width: 30vw; height: 30vw; left: 30%; bottom: -20%; background: radial-gradient(circle, #10281f 0%, transparent 65%); animation: drift3 46s ease-in-out infinite alternate; }
+.b1 { width: 44vw; height: 44vw; left: -8%;  top: -14%; background: radial-gradient(circle, #0e3328 0%, transparent 65%); animation: drift1 34s ease-in-out infinite alternate; }
+.b2 { width: 38vw; height: 38vw; right: -10%; top: 16%;  background: radial-gradient(circle, #122b2b 0%, transparent 65%); animation: drift2 40s ease-in-out infinite alternate; }
+.b3 { width: 30vw; height: 30vw; left: 30%; bottom: -20%; background: radial-gradient(circle, #0d2119 0%, transparent 65%); animation: drift3 46s ease-in-out infinite alternate; }
 @keyframes drift1 { to { transform: translate(8vw, 6vh) scale(1.12); } }
 @keyframes drift2 { to { transform: translate(-6vw, -5vh) scale(.92); } }
 @keyframes drift3 { to { transform: translate(4vw, -8vh) scale(1.08); } }
@@ -47,7 +47,7 @@ body {
   position: fixed; z-index: -1; pointer-events: none;
   left: 0; top: 0;
   width: 480px; height: 480px; margin: -240px 0 0 -240px;
-  background: radial-gradient(circle, rgba(25,195,156,.10) 0%, rgba(25,195,156,.035) 42%, transparent 68%);
+  background: radial-gradient(circle, rgba(16,163,127,.11) 0%, rgba(16,163,127,.04) 42%, transparent 68%);
   will-change: transform;
 }
 
@@ -61,7 +61,7 @@ body {
 .glass::before {
   content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
   background: radial-gradient(240px circle at var(--gx, 50%) var(--gy, 50%),
-              rgba(25,195,156,.5), rgba(255,255,255,.08) 45%, transparent 70%);
+              rgba(16,163,127,.5), rgba(255,255,255,.08) 45%, transparent 70%);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask-composite: exclude;
   pointer-events: none; opacity: 0; transition: opacity .22s ease-out;
@@ -90,7 +90,7 @@ nav .tab {
   transition: color .16s ease-out, background .16s ease-out;
 }
 nav .tab:hover { color: var(--fg); background: rgba(255,255,255,.05); }
-nav .tab.active { color: #d7f5ec; background: var(--green-dim); box-shadow: inset 0 0 0 1px var(--green-line); }
+nav .tab.active { color: #c8ecdf; background: var(--green-dim); box-shadow: inset 0 0 0 1px var(--green-line); }
 
 .status-pill {
   margin-left: auto; display: flex; align-items: center; gap: 9px;
@@ -99,7 +99,7 @@ nav .tab.active { color: #d7f5ec; background: var(--green-dim); box-shadow: inse
   background: rgba(255,255,255,.02);
 }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .3s; }
-.dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(25,195,156,.55); }
+.dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(16,163,127,.55); }
 .dot.warn { background: var(--warn); }
 .dot.err { background: var(--err); }
 .dot.pulse { animation: pulse 1.2s ease-in-out infinite; }
@@ -166,8 +166,8 @@ button {
 }
 button:hover { border-color: var(--green-line); background: var(--green-dim); }
 button:active { transform: scale(.97); }
-button.primary { background: var(--green); border-color: transparent; color: #06120e; font-weight: 600; }
-button.primary:hover { background: #1cd7ac; }
+button.primary { background: var(--green); border-color: transparent; color: #04120d; font-weight: 600; }
+button.primary:hover { background: #12b28a; }
 button:disabled { opacity: .45; cursor: default; }
 .btn-sub { display: none; }
 
@@ -302,3 +302,10 @@ textarea:focus, input:focus { outline: none; border-color: var(--green-line); }
   transition: color .16s, border-color .16s, background .16s;
 }
 #btn-gear:hover { color: var(--green); border-color: var(--green-line); background: var(--green-dim); }
+
+/* ---------- 内容可复制 ---------- */
+.bubble, .source, .log, textarea, .kv, .list, .board-card, #scope-text { user-select: text; }
+nav .tab, button, .chip, .p-tag, .dot, .status-pill, header .brand { user-select: none; }
+.copy-btn { font-size: 11px; padding: 3px 9px; margin-top: 6px; border-radius: 6px;
+  color: var(--muted); background: rgba(255,255,255,.04); }
+.copy-btn:hover { color: var(--green); border-color: var(--green-line); }

@@ -340,6 +340,27 @@ function renderSources(results) {
   });
 }
 
+function copyBtnHtml() {
+  return `<button class="copy-btn" data-copy title="复制回答">⧉ 复制</button>`;
+}
+$("chat-log").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-copy]");
+  if (!btn) return;
+  const bubble = btn.closest(".bubble");
+  const text = (bubble?.innerText || "").replace(/\s*⧉ 复制\s*$/, "");
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = "✓ 已复制";
+    setTimeout(() => { btn.textContent = "⧉ 复制"; }, 1600);
+  } catch (_) {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+    btn.textContent = "✓ 已复制";
+    setTimeout(() => { btn.textContent = "⧉ 复制"; }, 1600);
+  }
+});
+
 function setBusy(busy) {
   $("btn-send").disabled = busy;
   $("btn-search-only").disabled = busy;
@@ -391,7 +412,7 @@ async function sendChat(searchOnly) {
             renderSources(ev.results);
           } else if (ev.type === "delta") {
             acc += ev.text;
-            bubble.innerHTML = md(acc) + caret;
+            bubble.innerHTML = md(acc) + caret + copyBtnHtml();
             $("chat-log").scrollTop = $("chat-log").scrollHeight;
           } else if (ev.type === "warning") {
             acc += `\n\n⚠ ${ev.message}`;
@@ -411,6 +432,7 @@ async function sendChat(searchOnly) {
           }
         }
       }
+      bubble.innerHTML = md(acc) + copyBtnHtml();
       if (!acc && bubble.textContent.includes("检索并思考中"))
         bubble.innerHTML = `<span class="fallback-note">(无返回)</span>`;
     }

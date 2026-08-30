@@ -383,7 +383,7 @@ def api_index_refresh():
         _INDEX_STATE["buf_out"], _INDEX_STATE["buf_err"] = buf_out, buf_err
         ok = None
         try:
-            import indexer_qwen
+            from vault_rag import indexer_qwen
             with contextlib.redirect_stdout(buf_out), \
                     contextlib.redirect_stderr(buf_err):
                 indexer_qwen.index()
@@ -394,8 +394,11 @@ def api_index_refresh():
             ok = False
         finally:
             _INDEX_LOCK.release()            # 端点 acquire，worker 释放
-            import search
-            search._CACHE["stamp"] = None    # 索引变了，清向量缓存
+            try:
+                from vault_rag import search
+                search._CACHE["stamp"] = None    # 索引变了，清向量缓存
+            except Exception:
+                pass                             # 收尾清理绝不阻塞状态落盘
             _INDEX_STATE.pop("buf_out", None)
             _INDEX_STATE.pop("buf_err", None)
             tail = "\n".join((buf_out.getvalue() + "\n" + buf_err.getvalue())
