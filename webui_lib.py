@@ -49,6 +49,47 @@ def chat_ready() -> bool:
     return bool(chat_api_key())
 
 
+# ---------- 供应商档案（cc-switch 式切换）----------
+
+PROVIDER_PRESETS = [
+    {"name": "Agnes 国内", "url": "https://api.agnes-ai.cn/v1/chat/completions",
+     "model": "agnes-2.5-flash"},
+    {"name": "Agnes 国际", "url": "https://apihub.agnes-ai.com/v1/chat/completions",
+     "model": "agnes-2.5-flash"},
+    {"name": "llama.cpp 本地", "url": "http://127.0.0.1:8080/v1/chat/completions",
+     "model": "qwen3"},
+]
+
+
+def active_provider() -> dict:
+    """当前生效的生成供应商（存 _local_settings.json，改完即时生效）。"""
+    s = load_local_settings()
+    cur = s.get("provider")
+    if isinstance(cur, dict) and cur.get("url"):
+        return {"name": str(cur.get("name", "自定义")),
+                "url": str(cur["url"]), "model": str(cur.get("model", ""))}
+    for p in PROVIDER_PRESETS:
+        if p["name"] == cur:
+            return dict(p)
+    return dict(PROVIDER_PRESETS[0])            # 默认国内站
+
+
+def switch_provider(name: str | None = None, url: str | None = None,
+                    model: str | None = None) -> dict:
+    """按预设名切换，或写入自定义 url/model。返回生效档案。"""
+    if name:
+        for p in PROVIDER_PRESETS:
+            if p["name"] == name:
+                save_local_settings({"provider": dict(p)})
+                return dict(p)
+        raise ValueError(f"未知供应商: {name}")
+    if not url:
+        raise ValueError("需要 name 或 url")
+    prof = {"name": name or "自定义", "url": url, "model": model or ""}
+    save_local_settings({"provider": prof})
+    return prof
+
+
 # ---------- 聊天提示词组装（纯函数） ----------
 
 def build_context_block(chunks: list[dict], max_chars: int = 600) -> str:
@@ -82,15 +123,16 @@ class ChatUnavailable(Exception):
 
 
 def stream_chat(messages: list[dict], temperature: float = 0.3):
-    """流式生成，逐段 yield 文本增量。失败抛 ChatUnavailable。"""
+    """流式生成，逐段 yield 文本增量。失败抛 ChatUnavailable。走当前生效供应商。"""
     key = chat_api_key()
     if not key:
-        raise ChatUnavailable("未配置 API key（管理页可设置，或设 AGNES_API_KEY 环境变量）")
+        raise ChatUnavailable("未配置 API key（设置面板可填，或设 AGNES_API_KEY 环境变量）")
+    prof = active_provider()
     try:
         r = requests.post(
-            CHAT_API_URL,
+            prof["url"],
             headers={"Authorization": f"Bearer {key}"},
-            json={"model": CHAT_MODEL, "messages": messages,
+            json={"model": prof["model"], "messages": messages,
                   "temperature": temperature, "stream": True},
             stream=True, timeout=(15, CHAT_TIMEOUT))
         if r.status_code != 200:
@@ -118,14 +160,25 @@ def chat_once(messages: list[dict], temperature: float = 0.3) -> str:
     key = chat_api_key()
     if not key:
         raise ChatUnavailable("未配置 API key")
+    prof = active_provider()
     r = requests.post(
-        CHAT_API_URL,
+        prof["url"],
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": CHAT_MODEL, "messages": messages, "temperature": temperature},
+        json={"model": prof["model"], "messages": messages, "temperature": temperature},
         timeout=(15, CHAT_TIMEOUT))
     if r.status_code != 200:
         raise ChatUnavailable(f"端点 HTTP {r.status_code}: {r.text[:120]}")
     return r.json()["choices"][0]["message"]["content"]
+
+
+def test_provider(timeout: float = 15.0) -> dict:
+    """连通性测试：不发流，问一声"ping"。返回 {ok, latency_ms, detail}。"""
+    t0 = time.time()
+    try:
+        chat_once([{"role": "user", "content": "ping，请只回复:pong"}], temperature=0)
+        return {"ok": True, "latency_ms": int((time.time() - t0) * 1000), "detail": "连通"}
+    except ChatUnavailable as e:
+        return {"ok": False, "latency_ms": int((time.time() - t0) * 1000), "detail": str(e)}
 
 
 # ---------- 检索 ----------

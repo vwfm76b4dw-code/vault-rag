@@ -212,12 +212,13 @@ def api_pick_file():
     return {"path": str(files[0]) if isinstance(files, list) else str(files)}
 
 
-# ---------------- 设置 ----------------
+# ---------------- 设置 / 供应商（cc-switch 式切换） ----------------
 
 @app.get("/api/settings")
 def api_settings_get():
-    return {"key_set": lib.chat_ready(), "endpoint": lib.CHAT_API_URL,
-            "model": lib.CHAT_MODEL}
+    prof = lib.active_provider()
+    return {"key_set": lib.chat_ready(), "endpoint": prof["url"],
+            "model": prof["model"], "provider": prof["name"]}
 
 
 class SettingsReq(BaseModel):
@@ -228,6 +229,34 @@ class SettingsReq(BaseModel):
 def api_settings_save(req: SettingsReq):
     lib.save_local_settings({"agnes_key": req.agnes_key.strip()})
     return {"ok": True, "key_set": lib.chat_ready()}
+
+
+@app.get("/api/providers")
+def api_providers_get():
+    return {"presets": lib.PROVIDER_PRESETS, "active": lib.active_provider()}
+
+
+class ProviderReq(BaseModel):
+    name: str = ""
+    url: str = ""
+    model: str = ""
+
+
+@app.post("/api/providers")
+def api_providers_switch(req: ProviderReq):
+    try:
+        prof = lib.switch_provider(req.name.strip() or None,
+                                   req.url.strip() or None,
+                                   req.model.strip() or None)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"ok": True, "active": prof}
+
+
+@app.post("/api/chat/test")
+def api_chat_test():
+    """当前供应商连通性测试（不计入对话）。"""
+    return lib.test_provider()
 
 
 # ---------------- 索引管理 ----------------

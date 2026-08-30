@@ -25,21 +25,39 @@ const $ = (id) => document.getElementById(id);
   }, { passive: true });
 })();
 
-/* ================= 快捷设置面板 ================= */
+/* ================= 快捷设置面板（cc-switch 式供应商切换） ================= */
+async function renderProviders() {
+  const d = await api("/api/providers");
+  const box = $("provider-list");
+  box.innerHTML = "";
+  d.presets.forEach((p) => {
+    const active = p.url === d.active.url;
+    const row = document.createElement("div");
+    row.className = "provider" + (active ? " active" : "");
+    row.innerHTML =
+      `<div class="p-body"><div class="p-name">${escapeHtml(p.name)}</div>` +
+      `<div class="p-sub">${escapeHtml(p.url)} · ${escapeHtml(p.model)}</div></div>` +
+      (active ? `<span class="p-tag">● 使用中</span>` : `<span class="p-tag muted">切换</span>`);
+    row.addEventListener("click", async () => {
+      try {
+        await post("/api/providers", { name: p.name });
+        renderProviders();
+        refreshStatus();
+      } catch (e) { alert(e.message); }
+    });
+    box.appendChild(row);
+  });
+}
+
 function openModal() {
   $("modal-backdrop").classList.add("open");
-  api("/api/settings").then((cfg) => {
+  renderProviders().catch(() => {});
+  api("/api/status").then((st) => {
     $("modal-info").innerHTML =
-      `<div class="row"><span class="muted">Key</span><span>${cfg.key_set ? "✓ 已配置" : "✗ 未配置"}</span></div>` +
-      `<div class="row"><span class="muted">生成模型（云端）</span><span>${escapeHtml(cfg.model)}</span></div>` +
-      `<div class="row"><span class="muted">生成端点</span><span style="font-size:11px;word-break:break-all">${escapeHtml(cfg.endpoint)}</span></div>` +
-      `<div class="row"><span class="muted">检索向量（本地端点）</span><span id="modal-embed" class="muted small">探测中…</span></div>`;
-    api("/api/status").then((st) => {
-      const el = $("modal-embed");
-      if (el) el.innerHTML = st.embed_ready
-        ? `<span style="color:var(--ok)">✓ 在线（语义检索）</span> ${escapeHtml(st.embed_url)}`
-        : `<span style="color:var(--warn)">✗ 离线 → 关键词检索</span> ${escapeHtml(st.embed_url)}`;
-    }).catch(() => {});
+      `<div class="row"><span class="muted">检索向量（本地端点）</span><span>${st.embed_ready
+        ? `<span style="color:var(--ok)">✓ 在线 · 语义检索</span>`
+        : `<span style="color:var(--warn)">✗ 离线 · 关键词检索</span>`}</span></div>` +
+      `<div class="row"><span class="muted">检索端点</span><span style="font-size:11px">${escapeHtml(st.embed_url)}</span></div>`;
   }).catch(() => {});
   $("modal-key").focus();
 }
@@ -50,6 +68,18 @@ $("modal-backdrop").addEventListener("click", (e) => {
   if (e.target === $("modal-backdrop")) closeModal();
 });
 addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
+$("btn-provider-test").addEventListener("click", async () => {
+  const el = $("provider-test-msg");
+  el.textContent = "测试中…";
+  el.className = "msg muted";
+  try {
+    const r = await post("/api/chat/test");
+    el.textContent = r.ok ? `✓ 连通（${r.latency_ms}ms）` : `✗ ${r.detail}`;
+    el.className = "msg " + (r.ok ? "ok" : "err");
+  } catch (e) { el.textContent = e.message; el.className = "msg err"; }
+});
+
 $("modal-key-save").addEventListener("click", async () => {
   const v = $("modal-key").value.trim();
   if (!v) { setMsgAuto("modal-key-msg", "输入为空，未保存", false); return; }
