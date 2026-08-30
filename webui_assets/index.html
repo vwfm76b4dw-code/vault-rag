@@ -8,260 +8,293 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<!-- 氛围层：极光 + 噪点 + 鼠标跟随光斑 -->
 <div class="aurora" aria-hidden="true">
   <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
 </div>
 <div class="grain" aria-hidden="true"></div>
 <div id="cursor-glow" aria-hidden="true"></div>
 
-<header>
-  <div class="brand">
-    <span class="logo"><svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true">
-      <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#33ff33"/><stop offset="1" stop-color="#99ff99"/>
-      </linearGradient></defs>
-      <path d="M32 4 56 17.5V46.5L32 60 8 46.5V17.5Z" fill="#111413"
-            stroke="url(#lg)" stroke-width="3" stroke-linejoin="round"/>
-      <path d="M32 13 48 22.2V40.8L32 50 16 40.8V22.2Z" fill="none"
-            stroke="url(#lg)" stroke-width="1.2" opacity=".35"/>
-      <g stroke="url(#lg)" stroke-width="1.6" opacity=".9">
-        <line x1="32" y1="31.5" x2="23" y2="24"/><line x1="32" y1="31.5" x2="41" y2="24"/>
-        <line x1="32" y1="31.5" x2="32" y2="43"/>
-      </g>
-      <circle cx="23" cy="24" r="3" fill="#99ff99"/><circle cx="41" cy="24" r="3" fill="#33ff33"/>
-      <circle cx="32" cy="43" r="3" fill="#66ff66"/>
-      <circle cx="32" cy="31.5" r="4.2" fill="url(#lg)"/>
-      <circle cx="32" cy="31.5" r="6.5" fill="none" stroke="#33ff33" opacity=".5"/>
-    </svg></span>
-    <span class="title">vault-rag<em>·控制台</em></span>
-  </div>
-  <nav id="tabs">
-    <button class="tab active" data-tab="chat">✦ 问答</button>
-    <button class="tab" data-tab="board">▦ 看板</button>
-    <button class="tab" data-tab="repo">▤ 仓库</button>
-    <button class="tab" data-tab="manage">⚙ 管理器</button>
-  </nav>
-  <button id="btn-gear" title="快捷设置 (Key / 端点)">⚙</button>
-  <div class="status-pill" id="status-pill">
-    <span class="dot" id="dot-model" title="检索模型"></span>
-    <span class="dot" id="dot-chat" title="AI 问答"></span>
-    <span id="status-text">连接中…</span>
-  </div>
-</header>
+<div class="app">
+  <!-- ============ 侧边导航（分级） ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="logo"><svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#33ff33"/><stop offset="1" stop-color="#99ff99"/>
+        </linearGradient></defs>
+        <path d="M32 4 56 17.5V46.5L32 60 8 46.5V17.5Z" fill="#111413"
+              stroke="url(#lg)" stroke-width="3" stroke-linejoin="round"/>
+        <path d="M32 13 48 22.2V40.8L32 50 16 40.8V22.2Z" fill="none"
+              stroke="url(#lg)" stroke-width="1.2" opacity=".35"/>
+        <g stroke="url(#lg)" stroke-width="1.6" opacity=".9">
+          <line x1="32" y1="31.5" x2="23" y2="24"/><line x1="32" y1="31.5" x2="41" y2="24"/>
+          <line x1="32" y1="31.5" x2="32" y2="43"/>
+        </g>
+        <circle cx="23" cy="24" r="3" fill="#99ff99"/><circle cx="41" cy="24" r="3" fill="#33ff33"/>
+        <circle cx="32" cy="43" r="3" fill="#66ff66"/>
+        <circle cx="32" cy="31.5" r="4.2" fill="url(#lg)"/>
+        <circle cx="32" cy="31.5" r="6.5" fill="none" stroke="#33ff33" opacity=".5"/>
+      </svg></span>
+      <span class="title">vault-rag</span>
+    </div>
 
-<main>
-  <!-- ============ 问答 ============ -->
-  <section id="tab-chat" class="panel active">
-    <div class="chat-wrap glass">
-      <div id="chat-log" class="chat-log">
-        <div class="msg assistant"><div class="bubble">
-          <p>你的知识库已就绪。提问后我会检索本地笔记并生成带引用的回答。</p>
-          <p class="muted small">发送 = 检索 + AI 生成 · 仅检索 = 只看来源 · 点击来源卡可打开原文</p>
-        </div></div>
-      </div>
-      <div class="chips" id="chips">
-        <button class="chip">agent 怎么防遗忘</button>
-        <button class="chip">RAG 索引有哪些坑</button>
-        <button class="chip">本地模型部署方案对比</button>
-      </div>
-      <div class="chat-input-row">
-        <textarea id="chat-input" rows="2" placeholder="向知识库提问…  (Enter 发送 / Shift+Enter 换行)"></textarea>
-        <div class="chat-actions">
-          <button id="btn-send" class="primary">发送<span class="btn-sub" id="send-sub"></span></button>
-          <button id="btn-search-only">仅检索</button>
+    <nav class="side-nav">
+      <div class="nav-cap">工作台</div>
+      <button class="nav-item active" data-nav="chat">✦ 问答</button>
+      <button class="nav-item" data-nav="board">▦ 看板</button>
+
+      <div class="nav-cap">知识库</div>
+      <button class="nav-item" data-nav="repo">▤ 仓库管理</button>
+      <button class="nav-item" data-nav="index">⟳ 索引与范围</button>
+
+      <div class="nav-cap">模型</div>
+      <button class="nav-item" data-nav="models-gen">✧ 生成供应商</button>
+      <button class="nav-item" data-nav="models-emb">◈ 检索 Embedding</button>
+
+      <div class="nav-cap">系统</div>
+      <button class="nav-item" data-nav="settings">⚙ 设置</button>
+    </nav>
+
+    <div class="side-foot">
+      <span class="dot" id="dot-model" title="检索向量"></span>
+      <span class="dot" id="dot-chat" title="生成供应商"></span>
+      <span id="status-text" class="mono">连接中…</span>
+    </div>
+  </aside>
+
+  <!-- ============ 内容区 ============ -->
+  <div class="content">
+    <header class="topbar">
+      <h2 id="page-title">问答</h2>
+      <div class="status-pill" id="topbar-info">—</div>
+    </header>
+
+    <main>
+      <!-- ============ 问答 ============ -->
+      <section id="panel-chat" class="panel active">
+        <div class="chat-wrap glass">
+          <div id="chat-log" class="chat-log">
+            <div class="msg assistant"><div class="bubble">
+              <p>你的知识库已就绪。提问后我会检索本地笔记并生成带引用的回答。</p>
+              <p class="muted small">发送 = 检索 + AI 生成 · 仅检索 = 只看来源 · 点击来源卡可打开原文</p>
+            </div></div>
+          </div>
+          <div class="chips" id="chips">
+            <button class="chip">agent 怎么防遗忘</button>
+            <button class="chip">RAG 索引有哪些坑</button>
+            <button class="chip">本地模型部署方案对比</button>
+          </div>
+          <div class="chat-input-row">
+            <textarea id="chat-input" rows="2" placeholder="向知识库提问…  (Enter 发送 / Shift+Enter 换行)"></textarea>
+            <div class="chat-actions">
+              <button id="btn-send" class="primary">发送</button>
+              <button id="btn-search-only">仅检索</button>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
-    <aside class="sources-panel glass">
-      <h3><span class="h-ico">◈</span> 来源 <span id="sources-count" class="muted"></span></h3>
-      <div id="sources-list" class="empty">回答后显示引用来源</div>
-    </aside>
-  </section>
+        <aside class="sources-panel glass">
+          <h3><span class="h-ico">◈</span> 来源 <span id="sources-count" class="muted"></span></h3>
+          <div id="sources-list" class="empty">回答后显示引用来源</div>
+        </aside>
+      </section>
 
-  <!-- ============ 看板 ============ -->
-  <section id="tab-board" class="panel">
-    <div class="cards" id="cards"></div>
-    <div class="board-grid">
-      <div class="board-card glass">
-        <h3>领域分布</h3>
-        <div id="domains" class="bars"></div>
-      </div>
-      <div class="board-card glass">
-        <h3>知识关系图 <span class="muted small" id="edges-hint"></span></h3>
-        <div id="edges" class="kv"></div>
-        <h3 class="mt">权重榜 Top 8 <span class="muted small" id="weights-hint"></span></h3>
-        <div id="weights" class="kv"></div>
-      </div>
-      <div class="board-card glass">
-        <h3>最近索引的笔记</h3>
-        <div id="recent" class="list"></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ 仓库 ============ -->
-  <section id="tab-repo" class="panel">
-    <div class="cards" id="repo-cards"></div>
-    <div class="board-card glass">
-      <h3>系统自检 <span class="muted small">（与 MCP 同一条代码链路）</span></h3>
-      <div class="row"><button id="btn-selftest" class="primary">运行自检</button>
-        <span id="selftest-msg" class="muted small"></span></div>
-      <div id="selftest-list" class="kv"></div>
-    </div>
-    <div class="board-card glass">
-      <h3>已索引笔记 <span class="muted small" id="repo-total"></span></h3>
-      <div class="row">
-        <input id="repo-q" placeholder="按路径搜索…">
-        <select id="repo-domain" class="sel" style="max-width:180px"><option value="">全部领域</option></select>
-        <button id="btn-repo-search">搜索</button>
-      </div>
-      <div id="repo-notes" class="list"></div>
-      <div class="row" style="justify-content:center">
-        <button id="repo-prev">‹ 上一页</button>
-        <span id="repo-page" class="muted small mono"></span>
-        <button id="repo-next">下一页 ›</button>
-      </div>
-    </div>
-    <div class="board-card glass">
-      <h3>库操作 <span class="muted small">（危险操作均有确认）</span></h3>
-      <div class="row">
-        <button id="btn-clear-cache">清空 Embed 缓存</button>
-        <button id="btn-vacuum">VACUUM 压缩数据库</button>
-        <button id="btn-rebuild" class="danger">清空索引并全量重建</button>
-      </div>
-      <div id="repo-op-msg" class="msg"></div>
-    </div>
-  </section>
-
-  <!-- ============ 管理器 ============ -->
-  <section id="tab-manage" class="panel">
-    <div class="manage-grid">
-      <div class="board-card glass">
-        <h3>索引范围 include.txt</h3>
-        <textarea id="scope-text" class="code" rows="16" spellcheck="false"></textarea>
-        <div class="row">
-          <button id="btn-scope-save" class="primary">保存</button>
-          <span id="scope-msg" class="msg"></span>
+      <!-- ============ 看板 ============ -->
+      <section id="panel-board" class="panel">
+        <div class="cards" id="cards"></div>
+        <div class="board-grid">
+          <div class="board-card glass">
+            <h3>领域分布</h3>
+            <div id="domains" class="bars"></div>
+          </div>
+          <div class="board-card glass">
+            <h3>知识关系图 <span class="muted small" id="edges-hint"></span></h3>
+            <div id="edges" class="kv"></div>
+            <h3 class="mt">权重榜 Top 8 <span class="muted small" id="weights-hint"></span></h3>
+            <div id="weights" class="kv"></div>
+          </div>
+          <div class="board-card glass">
+            <h3>最近索引的笔记</h3>
+            <div id="recent" class="list"></div>
+          </div>
         </div>
-      </div>
-      <div class="board-card glass">
-        <h3>添加外部文件（@ 规则）</h3>
-        <div class="row"><input id="ext-path" placeholder="C:\path\to\file.md 绝对路径">
-          <button id="btn-browse">浏览…</button></div>
-        <div class="row"><input id="ext-alias" placeholder="别名（可选，如 external/AI手册.md）"></div>
-        <div class="row"><button id="btn-ext-add">加入范围</button>
-          <span id="ext-msg" class="msg"></span></div>
+      </section>
 
-        <h3 class="mt">新建笔记</h3>
-        <div class="row"><input id="note-path" placeholder="知识/主题/新笔记.md"></div>
-        <textarea id="note-content" rows="5" placeholder="初始内容（可空，自动加 frontmatter）"></textarea>
-        <div class="row">
-          <label class="check"><input type="checkbox" id="note-overwrite"> 允许覆盖同名</label>
-          <button id="btn-note-create" class="primary">创建并索引</button>
-          <span id="note-msg" class="msg"></span>
+      <!-- ============ 仓库管理 ============ -->
+      <section id="panel-repo" class="panel">
+        <div class="cards" id="repo-cards"></div>
+        <div class="board-card glass">
+          <h3>系统自检 <span class="muted small">（与 MCP 同一条代码链路）</span></h3>
+          <div class="row"><button id="btn-selftest" class="primary">运行自检</button>
+            <span id="selftest-msg" class="muted small"></span></div>
+          <div id="selftest-list" class="kv"></div>
+        </div>
+        <div class="board-card glass">
+          <h3>已索引笔记 <span class="muted small" id="repo-total"></span></h3>
+          <div class="row">
+            <input id="repo-q" placeholder="按路径搜索…">
+            <select id="repo-domain" class="sel" style="max-width:180px"><option value="">全部领域</option></select>
+            <button id="btn-repo-search">搜索</button>
+          </div>
+          <div id="repo-notes" class="list"></div>
+          <div class="row" style="justify-content:center">
+            <button id="repo-prev">‹ 上一页</button>
+            <span id="repo-page" class="muted small mono"></span>
+            <button id="repo-next">下一页 ›</button>
+          </div>
+        </div>
+        <div class="board-card glass">
+          <h3>库操作 <span class="muted small">（危险操作均有确认）</span></h3>
+          <div class="row">
+            <button id="btn-clear-cache">清空 Embed 缓存</button>
+            <button id="btn-vacuum">VACUUM 压缩数据库</button>
+            <button id="btn-rebuild" class="danger">清空索引并全量重建</button>
+          </div>
+          <div id="repo-op-msg" class="msg"></div>
+        </div>
+      </section>
+
+      <!-- ============ 索引与范围 ============ -->
+      <section id="panel-index" class="panel">
+        <div class="manage-grid">
+          <div class="board-card glass">
+            <h3>索引范围 include.txt</h3>
+            <textarea id="scope-text" class="code" rows="16" spellcheck="false"></textarea>
+            <div class="row">
+              <button id="btn-scope-save" class="primary">保存</button>
+              <span id="scope-msg" class="msg"></span>
+            </div>
+          </div>
+          <div class="board-card glass">
+            <h3>添加外部文件（@ 规则）</h3>
+            <div class="row"><input id="ext-path" placeholder="C:\path\to\file.md 绝对路径">
+              <button id="btn-browse">浏览…</button></div>
+            <div class="row"><input id="ext-alias" placeholder="别名（可选，如 external/AI手册.md）"></div>
+            <div class="row"><button id="btn-ext-add">加入范围</button>
+              <span id="ext-msg" class="msg"></span></div>
+
+            <h3 class="mt">新建笔记</h3>
+            <div class="row"><input id="note-path" placeholder="知识/主题/新笔记.md"></div>
+            <textarea id="note-content" rows="5" placeholder="初始内容（可空，自动加 frontmatter）"></textarea>
+            <div class="row">
+              <label class="check"><input type="checkbox" id="note-overwrite"> 允许覆盖同名</label>
+              <button id="btn-note-create" class="primary">创建并索引</button>
+              <span id="note-msg" class="msg"></span>
+            </div>
+          </div>
+          <div class="board-card glass">
+            <h3>增量索引</h3>
+            <div class="row">
+              <button id="btn-index" class="primary">开始增量索引</button>
+              <span id="index-state" class="muted small"></span>
+            </div>
+            <pre id="index-log" class="log">（空闲）</pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 模型 · 生成供应商 ============ -->
+      <section id="panel-models-gen" class="panel">
+        <div class="two-col">
+          <div class="board-card glass">
+            <h3>供应商档案 <span class="muted small" id="provider-count"></span></h3>
+            <p class="muted small">回答生成走云端/本地推理端点，点击行切换；自定义档案可增删改，档案可带独立 key。</p>
+            <div id="provider-list" class="provider-list"></div>
+            <div class="row">
+              <button id="btn-provider-test">测试当前连通</button>
+              <span id="provider-test-msg" class="msg"></span>
+            </div>
+          </div>
+          <div class="board-card glass">
+            <h3 id="np-title">＋ 新增 / 修改档案</h3>
+            <div class="row"><input id="np-name" placeholder="名称（同名即覆盖）"></div>
+            <div class="row"><input id="np-url" placeholder="端点 URL（…/v1/chat/completions）"></div>
+            <div class="row"><input id="np-model" placeholder="模型名（如 agnes-2.5-flash）"></div>
+            <div class="row"><input id="np-key" type="password" placeholder="该档案专用 key（可选，留空用全局）"></div>
+            <div class="row"><button id="btn-np-save" class="primary">保存档案并启用</button>
+              <span id="np-msg" class="msg"></span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 模型 · 检索 Embedding ============ -->
+      <section id="panel-models-emb" class="panel">
+        <div class="board-card glass">
+          <h3>向量来源链</h3>
+          <p class="muted small"><b>HTTP 端点 → 内置 llama.cpp → 关键词</b>（离线自动降级，不阻塞检索）。</p>
+          <div class="row" id="embed-mode-row">
+            <label class="check"><input type="radio" name="embed-mode" value="auto"> 自动（推荐）</label>
+            <label class="check"><input type="radio" name="embed-mode" value="http"> 仅 HTTP 端点</label>
+            <label class="check"><input type="radio" name="embed-mode" value="llamacpp"> 仅内置 llama.cpp</label>
+            <label class="check"><input type="radio" name="embed-mode" value="off"> 纯关键词</label>
+          </div>
+          <div id="embed-status" class="kv"></div>
         </div>
 
-        <h3 class="mt">增量索引</h3>
-        <div class="row">
-          <button id="btn-index" class="primary">开始增量索引</button>
-          <span id="index-state" class="muted small"></span>
+        <div class="two-col">
+          <div class="board-card glass">
+            <h3>HTTP 端点档案</h3>
+            <div id="embed-profile-list" class="provider-list"></div>
+            <h3 class="mt">＋ 新增 / 修改端点</h3>
+            <div class="row"><input id="ep-name" placeholder="名称（如 LM Studio）"></div>
+            <div class="row"><input id="ep-url" placeholder="URL（…/v1/embeddings）"></div>
+            <div class="row"><input id="ep-model" placeholder="模型名"></div>
+            <div class="row"><input id="ep-key" type="password" placeholder="key（云端 embedding 用；本地留空）"></div>
+            <div class="row"><button id="btn-ep-save" class="primary">保存端点并启用</button></div>
+            <div class="row" id="ep-quick"></div>
+          </div>
+
+          <div class="board-card glass">
+            <h3>内置 llama.cpp <span id="llama-state" class="muted small"></span></h3>
+            <div id="llama-info" class="kv"></div>
+            <h3 class="mt">已下载模型 <span class="muted small">（点击选用）</span></h3>
+            <div id="gguf-list" class="provider-list"></div>
+
+            <h3 class="mt sub-h">下载新模型 <span class="muted small">（LM Studio 式，hf-mirror 可选）</span></h3>
+            <div class="row">
+              <input id="hf-repo" value="Qwen/Qwen3-Embedding-0.6B-GGUF" placeholder="HuggingFace 仓库 id">
+              <button id="btn-hf-list" class="primary">浏览文件</button>
+            </div>
+            <div class="row">
+              <label class="check"><input type="checkbox" id="hf-mirror" checked> hf-mirror 镜像</label>
+            </div>
+            <div id="hf-files" class="provider-list empty">输入仓库后点「浏览文件」</div>
+          </div>
         </div>
-        <pre id="index-log" class="log">（空闲）</pre>
-      </div>
-      <div class="board-card glass">
-        <h3>设置</h3>
-        <p class="muted small">AI 问答的 API key（OpenAI 兼容端点）。保存到本地
-          <code>data/_local_settings.json</code>（已被 gitignore，不入库）。</p>
-        <div class="row"><input id="key-input" type="password" placeholder="sk-…（留空则不改）"></div>
-        <div class="row"><button id="btn-key-save" class="primary">保存 Key</button>
-          <span id="key-msg" class="msg"></span></div>
-        <div id="endpoint-info" class="kv mt"></div>
-        <p class="muted small">也支持本地端点：设 <code>RAG_CHAT_API_URL</code> 指向
-          llama.cpp server 的 <code>/v1/chat/completions</code>、<code>RAG_CHAT_MODEL</code> 指向模型即可。</p>
-      </div>
-    </div>
-  </section>
-</main>
+      </section>
 
-<!-- 模型管理面板（cc-switch 式：生成 / 检索 两页签，档案可增删改切换） -->
-<div id="modal-backdrop" class="modal-backdrop">
-  <div class="modal glass">
-    <div class="modal-head"><h3>⚙ 模型管理</h3><button id="modal-close" title="关闭">✕</button></div>
-    <div class="modal-tabs">
-      <button class="mtab active" data-mtab="gen">生成供应商</button>
-      <button class="mtab" data-mtab="embed">检索 Embedding</button>
-    </div>
-
-    <!-- 页签：生成 -->
-    <div class="mtab-panel active" id="mtab-gen">
-      <p class="muted small">回答生成走云端供应商，点击行切换；自定义档案可增删改。</p>
-      <div id="provider-list" class="provider-list"></div>
-      <details class="add-box">
-        <summary>＋ 新增 / 修改档案</summary>
-        <div class="row"><input id="np-name" placeholder="名称（同名即覆盖）"></div>
-        <div class="row"><input id="np-url" placeholder="端点 URL（…/v1/chat/completions）"></div>
-        <div class="row"><input id="np-model" placeholder="模型名（如 agnes-2.5-flash）"></div>
-        <div class="row"><input id="np-key" type="password" placeholder="该档案专用 key（可选，留空用全局）"></div>
-        <div class="row"><button id="btn-np-save" class="primary">保存档案并启用</button></div>
-        <div class="sep"></div>
-        <p class="muted small">生成偏好</p>
-        <div class="row"><span class="muted small" style="min-width:70px">temperature</span>
-          <input id="pref-temp" type="number" min="0" max="2" step="0.1" style="max-width:90px">
-          <span class="muted small" style="min-width:40px">top_k</span>
-          <input id="pref-topk" type="number" min="1" max="30" step="1" style="max-width:90px">
-          <button id="btn-pref-save">保存</button><span id="pref-msg" class="msg"></span></div>
-      </details>
-      <div class="row">
-        <button id="btn-provider-test">测试当前连通</button>
-        <span id="provider-test-msg" class="msg"></span>
-      </div>
-      <hr class="sep">
-      <p class="muted small">API key（Agnes 国内/国际站通用；本地 llama.cpp 无需 key）。</p>
-      <div class="row"><input id="modal-key" type="password" placeholder="sk-…（留空则不改）"></div>
-      <div class="row"><button id="modal-key-save" class="primary">保存 Key</button>
-        <span id="modal-key-msg" class="msg"></span></div>
-    </div>
-
-    <!-- 页签：检索 Embedding -->
-    <div class="mtab-panel" id="mtab-embed">
-      <p class="muted small">检索向量来源链：<b>HTTP 端点 → 内置 llama.cpp → 关键词</b>（离线自动降级，不阻塞检索）。</p>
-      <div class="row" id="embed-mode-row">
-        <label class="check"><input type="radio" name="embed-mode" value="auto"> 自动（推荐）</label>
-        <label class="check"><input type="radio" name="embed-mode" value="http"> 仅 HTTP 端点</label>
-        <label class="check"><input type="radio" name="embed-mode" value="llamacpp"> 仅内置 llama.cpp</label>
-        <label class="check"><input type="radio" name="embed-mode" value="off"> 纯关键词</label>
-      </div>
-      <div id="embed-status" class="kv"></div>
-
-      <h3 class="mt sub-h">HTTP 端点档案</h3>
-      <div id="embed-profile-list" class="provider-list"></div>
-      <details class="add-box">
-        <summary>＋ 新增 / 修改端点</summary>
-        <div class="row"><input id="ep-name" placeholder="名称（如 LM Studio）"></div>
-        <div class="row"><input id="ep-url" placeholder="URL（…/v1/embeddings）"></div>
-        <div class="row"><input id="ep-model" placeholder="模型名（如 text-embedding-qwen3-embedding-0.6b）"></div>
-        <div class="row"><input id="ep-key" type="password" placeholder="该端点 key（可选，云端 embedding 用；本地留空）"></div>
-        <div class="row"><button id="btn-ep-save" class="primary">保存端点并启用</button></div>
-        <div class="row" id="ep-quick"></div>
-      </details>
-
-      <h3 class="mt sub-h">内置 llama.cpp <span id="llama-state" class="muted small"></span></h3>
-      <div id="llama-info" class="kv"></div>
-      <div id="gguf-list" class="provider-list"></div>
-      <details class="add-box">
-        <summary>＋ 从 HuggingFace 下载 GGUF（hf-mirror 可选）</summary>
-        <div class="row"><input id="hf-repo" value="Qwen/Qwen3-Embedding-0.6B-GGUF" placeholder="仓库 id"></div>
-        <div class="row">
-          <label class="check"><input type="checkbox" id="hf-mirror" checked> hf-mirror 镜像</label>
-          <button id="btn-hf-list">列出文件</button>
+      <!-- ============ 设置 ============ -->
+      <section id="panel-settings" class="panel">
+        <div class="two-col">
+          <div class="board-card glass">
+            <h3>生成偏好</h3>
+            <div class="row"><span class="lbl-fixed">temperature</span>
+              <input id="pref-temp" type="number" min="0" max="2" step="0.1" style="max-width:100px">
+              <span class="muted small">0=精确 · 1=发散</span></div>
+            <div class="row"><span class="lbl-fixed">top_k</span>
+              <input id="pref-topk" type="number" min="1" max="30" step="1" style="max-width:100px">
+              <span class="muted small">每次检索注入的片段数</span></div>
+            <div class="row"><button id="btn-pref-save" class="primary">保存偏好</button>
+              <span id="pref-msg" class="msg"></span></div>
+            <hr class="sep">
+            <h3>全局 API key</h3>
+            <p class="muted small">供应商档案未带专用 key 时使用。存
+              <code>data/_local_settings.json</code>（gitignored）。</p>
+            <div class="row"><input id="modal-key" type="password" placeholder="sk-…（留空则不改）"></div>
+            <div class="row"><button id="modal-key-save" class="primary">保存全局 Key</button>
+              <span id="modal-key-msg" class="msg"></span></div>
+          </div>
+          <div class="board-card glass">
+            <h3>当前配置</h3>
+            <div id="settings-info" class="kv"></div>
+            <hr class="sep">
+            <p class="muted small">所有路径/线程/端点均可用环境变量覆盖：
+              <code>VAULT_PATH</code> <code>RAG_DATA_DIR</code> <code>RAG_TORCH_THREADS</code>
+              <code>RAG_CHAT_API_URL</code> <code>RAG_EMBED_BACKEND</code> <code>RAG_WEBUI_PORT</code> 等，
+              见 README 配置表。</p>
+          </div>
         </div>
-        <div class="row"><select id="hf-file" class="sel"></select></div>
-        <div class="row"><button id="btn-hf-download" class="primary">下载到 models/gguf/</button></div>
-        <div class="dl-bar"><div id="dl-fill"></div></div>
-        <div id="dl-status" class="muted small"></div>
-      </details>
-    </div>
+      </section>
+    </main>
   </div>
 </div>
 <script src="/static/app.js"></script>

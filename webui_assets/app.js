@@ -123,20 +123,53 @@ async function renderEmbed() {
   renderDl();
 }
 
+let dlPolling = false;
 function renderDl() {
   api("/api/embed/hf/status").then((s) => {
-    const fill = $("dl-fill"), txt = $("dl-status");
-    if (s.running) {
-      fill.style.width = (s.pct || 0) + "%";
-      txt.textContent = `下载中 ${s.pct}% · ${(s.downloaded / 1e6).toFixed(0)}/${((s.total || 0) / 1e6).toFixed(0)}MB · ${s.speed_mbs || 0}MB/s`;
-      setTimeout(renderDl, 800);
-    } else if (s.error) {
-      fill.style.width = "0%"; txt.textContent = "✗ " + s.error;
-    } else if (s.done) {
-      fill.style.width = "100%"; txt.textContent = "✓ 下载完成，模型已可选";
-      renderEmbed();
-    } else txt.textContent = "";
+    document.querySelectorAll("#hf-files .provider").forEach((row) => {
+      const btn = row.querySelector("[data-hf]");
+      const bar = row.querySelector(".dl-bar");
+      if (!btn || !bar) return;
+      const active = s.running && s.file === btn.dataset.hf;
+      bar.style.display = active ? "block" : "none";
+      btn.disabled = !!s.running;
+      btn.textContent = active ? "下载中" : "下载";
+      if (active) {
+        bar.firstElementChild.style.width = (s.pct || 0) + "%";
+        let info = row.querySelector(".dl-info");
+        if (!info) { info = document.createElement("span"); info.className = "dl-info"; row.appendChild(info); }
+        info.textContent = `${((s.downloaded || 0) / 1e6).toFixed(0)}/${((s.total || 0) / 1e6).toFixed(0)}MB · ${s.speed_mbs || 0}MB/s`;
+      }
+    });
+    if (s.running) { dlPolling = true; setTimeout(renderDl, 800); }
+    else if (dlPolling) { dlPolling = false; renderEmbed(); }   // 完成刷新已下载列表
   }).catch(() => {});
+}
+
+function renderHfFiles() {
+  const box = $("hf-files");
+  if (!hfFiles.length) { box.innerHTML = `<span class="empty">（无 GGUF 文件）</span>`; return; }
+  box.innerHTML = "";
+  hfFiles.forEach((f) => {
+    const row = document.createElement("div");
+    row.className = "provider";
+    row.innerHTML =
+      `<div class="p-body"><div class="p-name">${escapeHtml(f.file)}</div></div>` +
+      `<span class="p-tag muted">${f.size_mb} MB</span>` +
+      `<button class="primary" data-hf="${escapeHtml(f.file)}" style="padding:4px 12px">下载</button>` +
+      `<div class="dl-bar" style="display:none;min-width:150px"><div></div></div>`;
+    row.querySelector("[data-hf]").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      try {
+        const r = await post("/api/embed/hf/download",
+          { repo: $("hf-repo").value.trim(), file: f.file, mirror: $("hf-mirror").checked });
+        if (!r.ok) { alert(r.message); return; }
+        renderDl();
+      } catch (err) { alert(err.message); }
+    });
+    box.appendChild(row);
+  });
+  renderDl();
 }
 
 async function loadPrefs() {
@@ -156,19 +189,7 @@ $("btn-pref-save").addEventListener("click", async () => {
   } catch (e) { setMsg("pref-msg", e.message, false); }
 });
 
-function openModal() {
-  $("modal-backdrop").classList.add("open");
-  renderProviders().catch(() => {});
-  renderEmbed().catch(() => {});
-  loadPrefs().catch(() => {});
-}
-function closeModal() { $("modal-backdrop").classList.remove("open"); }
-$("btn-gear").addEventListener("click", openModal);
-$("modal-close").addEventListener("click", closeModal);
-$("modal-backdrop").addEventListener("click", (e) => {
-  if (e.target === $("modal-backdrop")) closeModal();
-});
-addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+function openModelsGen() { nav("models-gen"); }
 
 /* 新增/修改生成档案 */
 $("btn-np-save").addEventListener("click", async () => {
@@ -205,6 +226,7 @@ $("modal-key-save").addEventListener("click", async () => {
 });
 
 /* Embedding 端点档案新增 */
+let hfFiles = [];
 const EMBED_PRESETS = [
   { name: "LM Studio", url: "http://127.0.0.1:1234/v1/embeddings", model: "text-embedding-qwen3-embedding-0.6b" },
   { name: "llama-server 内置", url: "http://127.0.0.1:18900/v1/embeddings", model: "qwen3" },
@@ -238,25 +260,15 @@ $("btn-ep-save").addEventListener("click", async () => {
 
 /* HF GGUF 下载 */
 $("btn-hf-list").addEventListener("click", async () => {
-  const sel = $("hf-file");
-  sel.innerHTML = `<option>拉取中…</option>`;
+  const box = $("hf-files");
+  box.innerHTML = `<span class="empty">拉取中…</span>`;
   try {
     const r = await api(`/api/embed/hf/files?repo=${encodeURIComponent($("hf-repo").value.trim())}&mirror=${$("hf-mirror").checked}`);
-    sel.innerHTML = (r.files || []).map(
-      (f) => `<option value="${escapeHtml(f.file)}">${escapeHtml(f.file)}（${f.size_mb}MB）</option>`).join("");
-    if (!r.files?.length) sel.innerHTML = `<option>（无 GGUF 文件）</option>`;
-  } catch (e) { sel.innerHTML = `<option>✗ ${escapeHtml(e.message)}</option>`; }
+    hfFiles = r.files || [];
+    renderHfFiles();
+  } catch (e) { box.innerHTML = `<span class="empty">✗ ${escapeHtml(e.message)}</span>`; }
 });
-$("btn-hf-download").addEventListener("click", async () => {
-  const file = $("hf-file").value;
-  if (!file || file.startsWith("✗") || file.startsWith("（")) { alert("先列出文件并选择"); return; }
-  try {
-    const r = await post("/api/embed/hf/download",
-      { repo: $("hf-repo").value.trim(), file, mirror: $("hf-mirror").checked });
-    if (!r.ok) alert(r.message);
-    renderDl();
-  } catch (e) { alert(e.message); }
-});
+
 
 /* ================= 通用 ================= */
 async function api(path, opts) {
@@ -308,18 +320,28 @@ function md(text) {
 }
 const escapeHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/* ================= 标签页 ================= */
-document.querySelectorAll("#tabs .tab").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll("#tabs .tab").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-    btn.classList.add("active");
-    $("tab-" + btn.dataset.tab).classList.add("active");
-    if (btn.dataset.tab === "board") loadBoard();
-    if (btn.dataset.tab === "repo") loadRepo();
-    if (btn.dataset.tab === "manage") loadManage();
-  });
-});
+/* ================= 侧边分级导航 ================= */
+const TITLES = { chat: "问答", board: "看板", repo: "仓库管理", index: "索引与范围",
+                 "models-gen": "生成供应商", "models-emb": "检索 Embedding", settings: "设置" };
+function nav(name) {
+  document.querySelectorAll(".nav-item").forEach((b) =>
+    b.classList.toggle("active", b.dataset.nav === name));
+  document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+  $("panel-" + name).classList.add("active");
+  $("page-title").textContent = TITLES[name] || name;
+  if (name === "board") loadBoard();
+  if (name === "repo") loadRepo();
+  if (name === "index") loadManage();
+  if (name === "models-gen") renderProviders().catch(() => {});
+  if (name === "models-emb") renderEmbed().catch(() => {});
+  if (name === "settings") { loadPrefs().catch(() => {}); loadSettingsInfo().catch(() => {}); }
+  closeNavOnSmall();
+}
+function closeNavOnSmall() {
+  if (window.innerWidth <= 900) document.body.classList.remove("nav-open");
+}
+document.querySelectorAll(".nav-item").forEach((btn) =>
+  btn.addEventListener("click", () => nav(btn.dataset.nav)));
 
 /* ================= 状态条 ================= */
 async function refreshStatus() {
@@ -333,8 +355,9 @@ async function refreshStatus() {
       : "语义检索端点离线 → 已用关键词检索；启动 LM Studio (1234) 恢复语义检索";
     dotChat.className = "dot " + (st.chat_ready ? "ok" : "err");
     dotChat.title = st.chat_ready ? "AI 问答已配置（云端生成）" : "AI 问答未配置 key（管理器 → 设置）";
-    document.getElementById("status-text").textContent =
-      `${st.notes} 篇 · ${st.chunks} 块 · ${st.db_mb}MB` + (ok ? "" : " · 库不一致!");
+    const msg = `${st.notes} 篇 · ${st.chunks} 块 · ${st.db_mb}MB` + (ok ? "" : " · 库不一致!");
+    document.getElementById("status-text").textContent = msg;
+    $("topbar-info").textContent = msg;
     $("status-pill").title =
       `上次索引: ${st.last_indexed}\n向量: ${st.vectors} · 缓存: ${st.embed_cache}\n` +
       `检索向量: ${st.embed_url} ${st.embed_ready ? "(在线)" : "(离线→关键词)"}\n` +
@@ -466,7 +489,7 @@ async function sendChat(searchOnly) {
             renderSources(ev.results);
             bubble.innerHTML =
               `<span class="fallback-note">⚠ AI 生成不可用：${escapeHtml(ev.message)}<br>` +
-              `→ <button class="linklike" data-open-settings>打开设置面板粘贴 Key</button>` +
+              `→ <button class="linklike" data-open-settings>到「生成供应商」粘贴 Key</button>` +
               `（检索不受影响，当前展示本地检索结果）</span>` +
               md("以下为本地检索结果（右侧可打开原文）：");
           } else if (ev.type === "error") {
@@ -488,7 +511,7 @@ async function sendChat(searchOnly) {
 $("btn-send").addEventListener("click", () => sendChat(false));
 $("btn-search-only").addEventListener("click", () => sendChat(true));
 $("chat-log").addEventListener("click", (e) => {
-  if (e.target.closest("[data-open-settings]")) openModal();
+  if (e.target.closest("[data-open-settings]")) nav("models-gen");
 });
 $("chat-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(false); }
@@ -762,3 +785,29 @@ $("btn-selftest").addEventListener("click", async () => {
       `<span class="muted small" style="text-align:right">${escapeHtml(c.detail)}</span></div>`).join("");
   } catch (e) { $("selftest-msg").textContent = "✗ " + e.message; }
 });
+
+/* ================= 设置页 ================= */
+async function loadSettingsInfo() {
+  try {
+    const [st, cfg, pf] = await Promise.all([
+      api("/api/status"), api("/api/providers"),
+      api("/api/prefs").catch(() => ({})),
+    ]);
+    const prof = cfg.active;
+    const rows = [
+      ["生成供应商", `${prof.name} · ${prof.model}`],
+      ["生成端点", prof.url],
+      ["检索链", (pf.top_k ? `top_k=${pf.top_k} · ` : "") + `temperature=${pf.temperature ?? 0.3}`],
+      ["检索端点", st.embed_url],
+      ["内置 llama.cpp", st.embed_ready ? "（HTTP 在线，未接管）" : (st.embed_ready === false ? "待命/接管中" : "—")],
+      ["torch 线程", "10（RAG_TORCH_THREADS 可调）"],
+      ["Web 端口", "8765（RAG_WEBUI_PORT 可调）"],
+      ["Vault", st.vault],
+    ];
+    $("settings-info").innerHTML = rows.map(([k, v]) =>
+      `<div class="row"><span style="color:var(--muted);min-width:110px">${escapeHtml(k)}</span>` +
+      `<span style="font-family:var(--mono);font-size:11.5px;word-break:break-all">${escapeHtml(String(v))}</span></div>`).join("");
+  } catch (e) {
+    $("settings-info").innerHTML = `<span class="empty">加载失败: ${escapeHtml(e.message)}</span>`;
+  }
+}
