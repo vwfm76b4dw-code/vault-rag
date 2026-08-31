@@ -108,7 +108,8 @@ def _iter_vault_md():
         yield rel, p
 
 
-def collect_files(rules: list[Rule] | None = None) -> list[tuple[str, Path]]:
+def collect_files(rules: list[Rule] | None = None,
+                  include_uploads: bool = True) -> list[tuple[str, Path]]:
     """解析 include.txt → [(rel_path 用于入库显示, 绝对 Path)]。
 
     - vault 内文件以相对 POSIX 路径标识
@@ -144,6 +145,15 @@ def collect_files(rules: list[Rule] | None = None) -> list[tuple[str, Path]]:
                for rule in rules[idx + 1:]):
             continue
         out[name] = ap
+
+    # 上传目录整目录自动纳入（不依赖 @ 规则——避免 include.txt 编辑/切换时丢失）
+    from vault_rag.config import DATA_DIR
+    uploads = DATA_DIR / "uploads"
+    if include_uploads and uploads.exists():
+        for p in sorted(uploads.rglob("*")):
+            if p.is_file():
+                rel = "uploads/" + p.relative_to(uploads).as_posix()
+                out.setdefault(rel, p)
 
     return sorted(out.items())
 

@@ -56,7 +56,7 @@ class TestCollectFiles(unittest.TestCase):
         orig_vault = scope.VAULT
         scope.VAULT = vault                    # 指向临时 vault，不碰真实数据
         try:
-            return dict(scope.collect_files(rules))
+            return dict(scope.collect_files(rules, include_uploads=False))
         finally:
             scope.VAULT = orig_vault
 

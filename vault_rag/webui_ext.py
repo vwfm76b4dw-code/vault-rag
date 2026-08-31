@@ -96,14 +96,32 @@ def api_selftest():
 
 @router.get("/prefs")
 def prefs_get():
-    return lib.load_local_settings().get("prefs") or {
-        "temperature": 0.3, "top_k": 6, "context_chars": 600}
+    p = lib.load_local_settings().get("prefs") or {}
+    return {"temperature": p.get("temperature", 0.3), "top_k": p.get("top_k", 6),
+            "threads": p.get("threads", 16), "context_chars": p.get("context_chars", 600)}
 
 
 class PrefsReq(BaseModel):
     temperature: float | None = None
     top_k: int | None = None
     context_chars: int | None = None
+    threads: int | None = None
+
+
+def _apply_threads(n: int) -> None:
+    """线程数运行时生效:环境变量 + config + 已加载的 torch。"""
+    import os as _os
+    n = max(1, min(32, int(n)))
+    prefs = {**(lib.load_local_settings().get("prefs") or {}), "threads": n}
+    lib.save_local_settings({"prefs": prefs})
+    _os.environ["RAG_TORCH_THREADS"] = str(n)
+    import vault_rag.config as config
+    config.TORCH_THREADS = n
+    try:
+        import torch
+        torch.set_num_threads(n)
+    except Exception:
+        pass
 
 
 @router.post("/prefs")
@@ -117,6 +135,8 @@ def prefs_save(req: PrefsReq):
         patch["context_chars"] = max(200, min(2000, int(patch["context_chars"])))
     prefs = {**(lib.load_local_settings().get("prefs") or {}), **patch}
     lib.save_local_settings({"prefs": prefs})
+    if "threads" in patch:
+        _apply_threads(int(patch["threads"]))
     return {"ok": True, "prefs": prefs}
 
 
@@ -173,6 +193,29 @@ def mcp_register_vaultrag():
 def sys_executable() -> str:
     import sys
     return sys.executable
+
+
+@router.get("/mcp/clients")
+def mcp_clients_list():
+    from vault_rag import mcp_clients as MC
+    return {"ok": True,
+            "clients": [dict(MC.detect(c), snippet=MC.snippet(c)) for c in MC.CLIENTS]}
+
+
+class ClientRegReq(BaseModel):
+    client: str
+
+
+@router.post("/mcp/clients/register")
+def mcp_clients_register(req: ClientRegReq):
+    from vault_rag import mcp_clients as MC
+    c = next((x for x in MC.CLIENTS if x["id"] == req.client), None)
+    if not c:
+        raise HTTPException(422, f"未知客户端: {req.client}")
+    try:
+        return {"ok": True, **MC.register(c)}
+    except Exception as e:
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
 
 
 @router.post("/mcp/protocol-test")

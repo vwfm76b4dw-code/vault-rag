@@ -311,3 +311,8 @@ button, .chip, .p-tag, .dot, .status-pill, .brand, .nav-item, .nav-cap { user-se
   text-align: center; color: var(--muted); transition: all .2s; cursor: pointer; }
 .dropzone:hover, .dropzone.drag { border-color: var(--green-line); background: var(--green-dim); color: var(--fg); }
 .dropzone p { margin: 4px 0; }
+
+/* ---------- 索引进度条 ---------- */
+.pbar { flex: 1; height: 6px; background: rgba(255,255,255,.07); border-radius: 4px;
+  overflow: hidden; }
+.pbar > div { height: 100%; width: 0; background: var(--green); transition: width .4s; }

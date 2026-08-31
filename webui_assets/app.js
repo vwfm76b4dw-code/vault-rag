@@ -221,14 +221,18 @@ async function loadPrefs() {
     const pf = await api("/api/prefs");
     $("pref-temp").value = pf.temperature ?? 0.3;
     $("pref-topk").value = pf.top_k ?? 6;
+    if ($("pref-threads")) $("pref-threads").value = pf.threads ?? 16;
   } catch (_) {}
 }
 $("btn-pref-save").addEventListener("click", async () => {
   try {
-    await post("/api/prefs", {
+    const body = {
       temperature: parseFloat($("pref-temp").value),
       top_k: parseInt($("pref-topk").value, 10),
-    });
+    };
+    if ($("pref-threads") && $("pref-threads").value) body.threads = parseInt($("pref-threads").value, 10);
+    await post("/api/prefs", body);
+    if (body.threads) setMsgAuto("threads-msg", "✓ 线程已应用（新加载的模型生效）", true, 5000);
     setMsgAuto("pref-msg", "✓ 已保存", true);
   } catch (e) { setMsg("pref-msg", e.message, false); }
 });
@@ -395,7 +399,8 @@ function nav(name) {
     "models-gen": () => renderProviders(),
     "models-emb": () => renderEmbed(),
     settings: async () => { await loadPrefs(); await loadSettingsInfo(); },
-    mcp: loadMcpStatus, repos: loadRepos,
+    mcp: async () => { await loadMcpStatus(); await loadClients(); },
+    repos: loadRepos,
   };
   if (loaders[name]) Promise.resolve(loaders[name]()).catch(e => console.error(name, e));
   closeNavOnSmall();
@@ -704,14 +709,26 @@ function pollIndex() {
     try {
       const st = await api("/api/index/status");
       const state = $("index-state");
+      const bar = $("index-pbar"), pct = $("index-pct");
       if (st.running) {
         state.textContent = `运行中 ${st.elapsed}s · 待索引 ${st.pending < 0 ? "?" : st.pending} 篇`;
         $("index-log").className = "log busy";
         $("index-log").textContent = st.log || "（编码中…）";
         $("index-log").scrollTop = $("index-log").scrollHeight;
+        // 从日志解析 [n/total] 篇进度
+        const m = (st.log || "").match(/\[(\d+)\/(\d+)\]/g);
+        let p = 0;
+        if (m && m.length) {
+          const last = m[m.length - 1].match(/\[(\d+)\/(\d+)\]/);
+          if (last) p = Math.round(Number(last[1]) / Number(last[2]) * 100);
+        }
+        if (bar) bar.firstElementChild.style.width = p + "%";
+        if (pct) pct.textContent = p + "%";
       } else {
         state.textContent = `待索引 ${st.pending < 0 ? "?" : st.pending} 篇` +
           (st.finished ? ` · 上次${st.ok === false ? " ✗失败" : " ✓完成"}` : "");
+        if (bar) bar.firstElementChild.style.width = "100%";
+        if (pct) pct.textContent = "✓";
         if (st.log) {
           $("index-log").className = "log";
           $("index-log").textContent = st.log;
@@ -859,7 +876,7 @@ async function loadSettingsInfo() {
       ["检索链", (pf.top_k ? `top_k=${pf.top_k} · ` : "") + `temperature=${pf.temperature ?? 0.3}`],
       ["检索端点", st.embed_url],
       ["内置 llama.cpp", st.embed_ready ? "（HTTP 在线，未接管）" : (st.embed_ready === false ? "待命/接管中" : "—")],
-      ["torch 线程", "10（RAG_TORCH_THREADS 可调）"],
+      ["torch 线程", (pf.threads || 16) + "（可在上方调整）"],
       ["Web 端口", "8765（RAG_WEBUI_PORT 可调）"],
       ["Vault", st.vault],
     ];
@@ -956,6 +973,46 @@ async function sendUpload(fileList) {
 }
 
 /* ================= MCP & 状态 ================= */
+async function loadClients() {
+  const box = $("clients-list");
+  box.innerHTML = `<span class="empty">检测中…</span>`;
+  try {
+    const d = await api("/api/mcp/clients");
+    box.innerHTML = "";
+    d.clients.forEach((c) => {
+      const row = document.createElement("div");
+      row.className = "provider" + (c.registered ? " active" : "");
+      row.innerHTML =
+        `<div class="p-body"><div class="p-name">${escapeHtml(c.name)}` +
+        (c.registered ? ` <span class="p-tag">● 已接入</span>` : ``) +
+        `</div><div class="p-sub">${escapeHtml(c.config_path)}${c.config_found ? "" : "（未检测到，接入时自动创建）"}</div></div>` +
+        (c.registered
+          ? `<span class="tag use">✓</span>`
+          : `<button class="primary mini" data-reg="${c.id}">一键接入</button>`);
+      const reg = row.querySelector("[data-reg]");
+      if (reg) reg.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        reg.disabled = true; reg.textContent = "写入中…";
+        try {
+          await post("/api/mcp/clients/register", { client: c.id });
+          reg.outerHTML = `<span class="tag use">✓ 已接入</span>`;
+        } catch (err) { alert(err.message); reg.disabled = false; reg.textContent = "一键接入"; }
+      });
+      box.appendChild(row);
+    });
+    // DeepSeek Harness / OpenClaw / Pi 未检测到时给片段兜底
+    const noCfg = d.clients.filter(c => !c.config_found && !c.registered);
+    if (noCfg.length) {
+      const d2 = document.createElement("details");
+      d2.className = "add-box";
+      d2.innerHTML = `<summary>未检测到配置的客户端 · 手动复制片段</summary>` +
+        noCfg.map(c => `<div class="row"><b class="small">${escapeHtml(c.name)}</b></div>` +
+          `<pre class="log" style="height:auto">${escapeHtml(c.snippet)}</pre>`).join("");
+      box.appendChild(d2);
+    }
+  } catch (e) { box.innerHTML = `<span class="empty">✗ ${escapeHtml(e.message)}</span>`; }
+}
+
 async function loadMcpStatus() {
   try {
     const [s, st] = await Promise.all([api("/api/mcp/status"), api("/api/status")]);

@@ -139,6 +139,17 @@
         <div class="manage-grid">
           <div class="board-card glass">
             <h3>索引范围 include.txt</h3>
+            <details class="add-box">
+              <summary>📖 范围规则说明（点开查看语法与示例）</summary>
+              <ul class="small" style="margin:6px 0 6px 18px">
+                <li><code>dir/</code> — 相对 Vault 根的目录，收其下全部 .md</li>
+                <li><code>path/to.md</code> — 单文件；<code>*.md</code> 仅匹配根级（跨目录用 <code>**</code>）</li>
+                <li><code>!pattern</code> — 排除；优先级高于之前所有包含，按行序覆盖</li>
+                <li><code>@绝对路径</code> — 外部文件也可入索引；<code>@绝对路径 as 别名</code> 指定入库名（必须显式命名避免冲突）</li>
+                <li>未被任何包含规则命中的文件不索引；改完保存无需重建全库：增量索引自动发现新增/排除并做增量迁移</li>
+                <li>批量上传的文件存 <code>data/uploads/</code>，自动纳入索引，不占 include 规则</li>
+              </ul>
+            </details>
             <textarea id="scope-text" class="code" rows="16" spellcheck="false"></textarea>
             <div class="row">
               <button id="btn-scope-save" class="primary">保存</button>
@@ -164,6 +175,8 @@
           </div>
           <div class="board-card glass">
             <h3>增量索引</h3>
+            <div class="row"><div class="pbar"><div id="index-pbar"></div></div>
+              <span id="index-pct" class="muted small mono" style="min-width:110px;text-align:right"></span></div>
             <div class="row">
               <button id="btn-index" class="primary">开始增量索引</button>
               <span id="index-state" class="muted small"></span>
@@ -308,6 +321,14 @@
             rag_status / refresh_index —— 与控制台同一条代码链路。</p>
         </div>
         <div class="board-card glass">
+          <h3>一键接入客户端 <span class="muted small">（把 vault-rag MCP 写入各客户端配置，写前自动备份）</span></h3>
+          <div id="clients-list" class="plist"></div>
+          <details class="add-box" id="snippet-box" style="display:none">
+            <summary>手动复制配置片段</summary>
+            <pre id="snippet-text" class="log" style="height:auto"></pre>
+          </details>
+        </div>
+        <div class="board-card glass">
           <h3>系统状态</h3>
           <div id="mcp-sysinfo" class="kv"></div>
           <div class="row"><button id="btn-mcp-refresh">刷新状态</button></div>
@@ -325,6 +346,11 @@
             <div class="row"><span class="lbl-fixed">top_k</span>
               <input id="pref-topk" type="number" min="1" max="30" step="1" style="max-width:100px">
               <span class="muted small">每次检索注入的片段数</span></div>
+            <div class="row"><span class="lbl-fixed">线程数</span>
+              <input id="pref-threads" type="number" min="1" max="32" step="1" style="max-width:100px">
+              <button id="btn-threads-save">应用线程</button>
+              <span id="threads-msg" class="msg"></span>
+              <span class="muted small">索引/检索编码所用 CPU 线程（默认 10）</span></div>
             <div class="row"><button id="btn-pref-save" class="primary">保存偏好</button>
               <span id="pref-msg" class="msg"></span></div>
             <hr class="sep">
