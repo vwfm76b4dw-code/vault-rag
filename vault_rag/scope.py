@@ -22,7 +22,6 @@ INCLUDE_PATH = Path(os.environ["RAG_INCLUDE"]) if os.getenv("RAG_INCLUDE") \
 Rule = tuple  # ("include"|"exclude", pred) / ("external", abs_path, alias)
 
 _up_hash_cache: dict = {}      # (路径,mtime,size) → sha256,避免轮询反复哈希
-_up_seen_content: dict = {}    # sha256 → 路径,uploads 内容去重
 
 
 
@@ -154,6 +153,7 @@ def collect_files(rules: list[Rule] | None = None,
     # 内容级去重：同一文件多次上传只保留最新一份
     from vault_rag.config import DATA_DIR
     uploads = DATA_DIR / "uploads"
+    seen_up_content: set = set()       # 去重只在本收集周期内生效（跨调用必须重纳）
     if include_uploads and uploads.exists():
         import hashlib
         for p in sorted(uploads.rglob("*"),
@@ -171,9 +171,9 @@ def collect_files(rules: list[Rule] | None = None,
                 if len(_up_hash_cache) > 1024:
                     _up_hash_cache.clear()
                 _up_hash_cache[ckey] = h
-            if h in _up_seen_content:
-                continue                       # 同内容已有更新的副本
-            _up_seen_content[h] = str(p)
+            if h in seen_up_content:
+                continue                       # 同内容已有更新的副本（仅本周期）
+            seen_up_content.add(h)
             rel = "uploads/" + p.relative_to(uploads).as_posix()
             out.setdefault(rel, p)
 

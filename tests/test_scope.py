@@ -101,5 +101,37 @@ class TestCollectFiles(unittest.TestCase):
             self.assertEqual(got2, {})
 
 
+class TestUploadsAutoInclude(unittest.TestCase):
+    """回归:uploads 自动纳入不能被跨调用去重状态误杀（49 cpp 下线事故）。"""
+
+    def test_uploads_persist_across_calls(self):
+        import tempfile
+        from vault_rag import config, scope
+        with tempfile.TemporaryDirectory() as td:
+            up = Path(td) / "uploads" / "batch1"
+            up.mkdir(parents=True)
+            (up / "a.cpp").write_text("// same content", encoding="utf-8")
+            import vault_rag.config as cfg
+            orig_data = cfg.DATA_DIR
+            orig_cache = dict(scope._up_hash_cache)
+            cfg.DATA_DIR = Path(td)          # collect_files 函数内动态读取
+            scope._up_hash_cache.clear()
+            try:
+                r1 = dict(scope.collect_files([], include_uploads=True))
+                r2 = dict(scope.collect_files([], include_uploads=True))
+                self.assertIn("uploads/batch1/a.cpp", r1)
+                self.assertIn("uploads/batch1/a.cpp", r2)   # 事故回归点
+                up2 = Path(td) / "uploads" / "batch2"
+                up2.mkdir(parents=True)
+                (up2 / "b.cpp").write_text("// same content", encoding="utf-8")
+                r3 = dict(scope.collect_files([], include_uploads=True))
+                self.assertNotIn("uploads/batch1/a.cpp", r3)   # 旧副本去重
+                self.assertIn("uploads/batch2/b.cpp", r3)      # 保留最新
+                self.assertEqual(len([k for k in r3 if k.endswith(".cpp")]), 1)
+            finally:
+                cfg.DATA_DIR = orig_data
+                scope._up_hash_cache = orig_cache
+
+
 if __name__ == "__main__":
     unittest.main()
