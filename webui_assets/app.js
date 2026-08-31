@@ -417,12 +417,8 @@ async function refreshStatus() {
     const msg = `${st.notes} 篇 · ${st.chunks} 块 · ${st.db_mb}MB` + (ok ? "" : " · 库不一致!");
     document.getElementById("status-text").textContent = msg;
     $("topbar-info").textContent = msg;
-    $("status-pill").title =
-      `上次索引: ${st.last_indexed}\n向量: ${st.vectors} · 缓存: ${st.embed_cache}\n` +
-      `检索向量: ${st.embed_url} ${st.embed_ready ? "(在线)" : "(离线→关键词)"}\n` +
-      `问答: ${st.chat_model} ${st.chat_ready ? "(已配置)" : "(未配置 key)"}\nvault: ${st.vault}`;
-    $("send-sub").textContent = "";
-  } catch (e) {
+    $("topbar-info").title = "上次索引: " + st.last_indexed + "\n检索向量: " + (st.embed_ready ? "在线" : "离线(关键词模式)") + "\n生成: " + st.chat_model + (st.chat_ready ? " ✓" : " 缺key");
+    } catch (e) {
     $("dot-model").className = "dot err";
     document.getElementById("status-text").textContent = "后端离线";
   }
@@ -645,7 +641,7 @@ async function loadManage() {
       $("scope-text").dataset.loaded = "1";
     }
     const cfg = await api("/api/settings");
-    $("endpoint-info").innerHTML =
+    $("settings-info").innerHTML =
       `<div class="row"><span class="muted">Key</span><span>${cfg.key_set ? "✓ 已配置" : "✗ 未配置"}</span></div>` +
       `<div class="row"><span class="muted">模型</span><span>${escapeHtml(cfg.model)}</span></div>` +
       `<div class="row"><span class="muted">端点</span><span style="font-size:11px;word-break:break-all">${escapeHtml(cfg.endpoint)}</span></div>`;
@@ -732,12 +728,12 @@ $("btn-index").addEventListener("click", async () => {
   } catch (e) { alert(e.message); }
 });
 
-$("btn-key-save").addEventListener("click", async () => {
-  const v = $("key-input").value.trim();
+$("modal-key-save").addEventListener("click", async () => {
+  const v = $("modal-key").value.trim();
   if (!v) { setMsgAuto("key-msg", "输入为空，未保存", false); return; }
   try {
     const r = await post("/api/settings", { agnes_key: v });
-    $("key-input").value = "";
+    $("modal-key").value = "";
     setMsgAuto("key-msg", r.key_set ? "✓ Key 已保存" : "保存失败", r.key_set);
     refreshStatus();
   } catch (e) { setMsg("key-msg", e.message, false); }
