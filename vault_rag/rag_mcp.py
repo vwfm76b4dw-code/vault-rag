@@ -22,6 +22,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from vault_rag.config import DB_PATH, DIM, MODEL_NAME_QWEN, TORCH_THREADS
 
+# 预导入 numpy：stdio MCP 子进程里延迟导入扩展模块可能永久阻塞
+# （Windows 管道句柄 + 扩展 DLL 初始化竞态），启动期一次性完成最稳。
+import numpy  # noqa: F401
+
 mcp = FastMCP("vault-rag")
 
 RAG_DB = DB_PATH                       # data/qwen_rag.db

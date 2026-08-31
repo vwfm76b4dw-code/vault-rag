@@ -16,6 +16,8 @@ src = src.replace('mcp = FastMCP("obsidian-search")', 'mcp = FastMCP("rag-obsidi
 
 FUSION = '''
 
+import numpy as np  # 预导入（避免 stdio 子进程延迟导入挂起）
+
 # == RAG 深度融合层 (2026-08-28) ======================================
 import urllib.request as _urlreq
 
