@@ -36,7 +36,7 @@ def snapshot_files():
         if str(p).startswith(str(VAULT)):
             key = "vault/" + p.relative_to(VAULT).as_posix()
         else:
-            key = "external/" + rel.split("/")[-1]   # 软链接式外部源同样纳入追踪
+            key = "external/" + Path(rel).name   # 非 vault 源（上传/外部）统一 external 命名
         out[key] = (p, p.stat().st_mtime)
     return out
 

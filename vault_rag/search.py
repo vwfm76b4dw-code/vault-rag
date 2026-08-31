@@ -234,23 +234,28 @@ def search(query: str, top_k: int = TOP_K, scope_dir: str | None = None,
     k = min(n, top_k * 8)
     order = np.argpartition(-sims, k - 1)[:k] if k < n else np.arange(n)
     order = order[np.argsort(-sims[order])]          # 候选内按分数降序
-    out, seen_notes = [], set()
+    out, seen_notes, seen_text = [], set(), set()
     for i in order:
         i = int(i)
         if rels_s[i] in seen_notes:       # 同一篇笔记只留最高分的一块
             continue
+        th = hash(texts_s[i])
+        if th in seen_text:               # 同内容多路重复(如重复上传)只留最高分
+            continue
         seen_notes.add(rels_s[i])
+        seen_text.add(th)
         out.append({"score": float(sims[i]), "rel_path": rels_s[i],
                     "section": secs_s[i], "text": texts_s[i]})
         if len(out) >= top_k:
             break
-    if len(out) < top_k and k < n:        # 候选被同笔记去重耗尽 → 全量兜底
+    if len(out) < top_k and k < n:        # 候选被去重耗尽 → 全量兜底
         full = np.argsort(-sims)
         for i in full:
             i = int(i)
-            if rels_s[i] in seen_notes:
+            if rels_s[i] in seen_notes or hash(texts_s[i]) in seen_text:
                 continue
             seen_notes.add(rels_s[i])
+            seen_text.add(hash(texts_s[i]))
             out.append({"score": float(sims[i]), "rel_path": rels_s[i],
                         "section": secs_s[i], "text": texts_s[i]})
             if len(out) >= top_k:

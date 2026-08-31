@@ -21,6 +21,10 @@ INCLUDE_PATH = Path(os.environ["RAG_INCLUDE"]) if os.getenv("RAG_INCLUDE") \
 
 Rule = tuple  # ("include"|"exclude", pred) / ("external", abs_path, alias)
 
+_up_hash_cache: dict = {}      # (路径,mtime,size) → sha256,避免轮询反复哈希
+_up_seen_content: dict = {}    # sha256 → 路径,uploads 内容去重
+
+
 
 def ensure_include_file() -> Path:
     """include.txt 不存在时自举（打包态从随包模板复制，开发态仓库本就有）。"""
@@ -147,13 +151,31 @@ def collect_files(rules: list[Rule] | None = None,
         out[name] = ap
 
     # 上传目录整目录自动纳入（不依赖 @ 规则——避免 include.txt 编辑/切换时丢失）
+    # 内容级去重：同一文件多次上传只保留最新一份
     from vault_rag.config import DATA_DIR
     uploads = DATA_DIR / "uploads"
     if include_uploads and uploads.exists():
-        for p in sorted(uploads.rglob("*")):
-            if p.is_file():
-                rel = "uploads/" + p.relative_to(uploads).as_posix()
-                out.setdefault(rel, p)
+        import hashlib
+        for p in sorted(uploads.rglob("*"),
+                        key=lambda x: (-x.stat().st_mtime_ns, x.name)):
+            if not p.is_file():
+                continue
+            st = p.stat()
+            ckey = ("up", str(p), st.st_mtime_ns, st.st_size)
+            h = _up_hash_cache.get(ckey)
+            if h is None:
+                try:
+                    h = hashlib.sha256(p.read_bytes()).hexdigest()
+                except OSError:
+                    continue
+                if len(_up_hash_cache) > 1024:
+                    _up_hash_cache.clear()
+                _up_hash_cache[ckey] = h
+            if h in _up_seen_content:
+                continue                       # 同内容已有更新的副本
+            _up_seen_content[h] = str(p)
+            rel = "uploads/" + p.relative_to(uploads).as_posix()
+            out.setdefault(rel, p)
 
     return sorted(out.items())
 
