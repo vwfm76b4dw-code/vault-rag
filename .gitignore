@@ -29,6 +29,10 @@ __pycache__/
 *.tmp*
 .venv/
 
+# 运行时指针（含本机绝对路径，首运自举重建，永不入库）
+/data_dir.txt
+/repos.json
+
 # PyInstaller
 build/
 dist/

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vault-rag"
-version = "1.1.0"
+version = "1.2.1"
 description = "本地优先的个人知识库 RAG 系统：语义检索 + 时效引擎 + 知识关系图 + MCP + Web 控制台"
 readme = "README.md"
 requires-python = ">=3.10"
