@@ -9,14 +9,18 @@ import sqlite3
 import time
 from pathlib import Path
 
-from vault_rag.config import DB_PATH, DATA_DIR
+from vault_rag import config
+
+
+def _db() -> Path:
+    return config.DB_PATH
 
 
 def _con(readonly: bool = False):
     if readonly:
-        con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        con = sqlite3.connect(f"file:{config.DB_PATH}?mode=ro", uri=True)
     else:
-        con = sqlite3.connect(DB_PATH, timeout=10)
+        con = sqlite3.connect(config.DB_PATH, timeout=10)
     con.row_factory = sqlite3.Row
     return con
 
@@ -84,7 +88,7 @@ def stats() -> dict:
         cache = con.execute("SELECT COUNT(*) FROM embed_cache").fetchone()[0]
     finally:
         con.close()
-    db_mb = DB_PATH.stat().st_size / 1e6 if DB_PATH.exists() else 0
+    db_mb = config.DB_PATH.stat().st_size / 1e6 if config.DB_PATH.exists() else 0
     return {"notes": notes, "chunks": chunks, "vectors": vectors,
             "embed_cache": cache, "db_mb": round(db_mb, 1),
             "consistent": chunks == vectors}
@@ -110,7 +114,7 @@ def vacuum() -> dict:
         con.execute("VACUUM")
     finally:
         con.close()
-    after = DB_PATH.stat().st_size / 1e6 if DB_PATH.exists() else 0
+    after = config.DB_PATH.stat().st_size / 1e6 if config.DB_PATH.exists() else 0
     return {"before_mb": round(before, 1), "after_mb": round(after, 1)}
 
 

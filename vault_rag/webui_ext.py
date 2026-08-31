@@ -1,56 +1,91 @@
 # -*- coding: utf-8 -*-
-"""webui_ext.py — 控制台扩展路由：RAG 仓库管理 / 系统自检 / 用户偏好。"""
+"""webui_ext.py — 控制台扩展路由：仓库管理 / 上传 / 系统自检 / 用户偏好 / MCP&状态。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Body
+import json
+import time
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 
 from vault_rag import repo_admin, selftest, webui_lib as lib
+from vault_rag.config import DATA_DIR
 
-router = APIRouter(prefix="/api", tags=["repo/selftest/prefs"])
+router = APIRouter(prefix="/api", tags=["repo/selftest/prefs/mcp"])
 
-
-# ---------------- RAG 仓库管理 ----------------
-
-@router.get("/repo/notes")
-def repo_notes(q: str = "", domain: str = "", page: int = 1, size: int = 30):
-    return repo_admin.notes_page(q=q, domain=domain, page=page, size=size)
+UPLOAD_DIR = DATA_DIR / "uploads"
 
 
-@router.get("/repo/stats")
-def repo_stats():
-    return repo_admin.stats()
+# ---------------- RAG 仓库管理（多仓库） ----------------
+
+@router.get("/repos")
+def repos_list():
+    from vault_rag import repos as R
+    return {"ok": True, "current": R.current_data_dir(), "repos": R.discover()}
 
 
-class RepoNoteReq(BaseModel):
-    rel_path: str
+class RepoCreateReq(BaseModel):
+    name: str
+    data_dir: str = ""
 
 
-@router.delete("/repo/notes")
-def repo_note_delete(req: RepoNoteReq):
+@router.post("/repos/create")
+def repos_create(req: RepoCreateReq):
+    name = req.name.strip()
+    if not name or any(c in name for c in '\\/:*?"<>|'):
+        raise HTTPException(422, "仓库名非法（禁止 \\/:*?\"<>|）")
+    from vault_rag import repos as R
+    if any(r["name"] == name for r in R.load_registry()):
+        raise HTTPException(422, f"仓库名已存在: {name}")
+    prof = R.create_repo(name, req.data_dir.strip() or None)
+    R.switch_to(name)                     # 新建即切换（与按钮文案一致）
+    return {"ok": True, **prof}
+
+
+class RepoSwitchReq(BaseModel):
+    name: str
+
+
+@router.post("/repos/switch")
+def repos_switch(req: RepoSwitchReq):
+    from vault_rag import repos as R
     try:
-        return {"ok": True, **repo_admin.delete_note(req.rel_path)}
+        prof = R.switch_to(req.name.strip())
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(422, str(e))
+    # 切换后向量化缓存已失效；提示前端刷新数据
+    return {"ok": True, "active": prof, "message": "已切换（立即生效；独立 MCP 进程重启后跟随）"}
 
 
-@router.post("/repo/clear-cache")
-def repo_clear_cache():
-    return {"ok": True, **repo_admin.clear_cache()}
+# ---------------- 批量上传（多文件 → data/uploads + 自动 @ 规则） ----------------
+
+@router.post("/upload")
+async def upload_files(files: list[UploadFile] = File(...)):
+    """批量上传文档：存 data/uploads/<批次>/ 并自动加入索引范围（@ 规则）。"""
+    if not files:
+        raise HTTPException(400, "未选择文件")
+    batch = UPLOAD_DIR / time.strftime("%Y%m%d-%H%M%S")
+    batch.mkdir(parents=True, exist_ok=True)
+    saved, skipped = [], []
+    for f in files:
+        safe = Path(f.filename).name
+        if not safe or safe.startswith("."):
+            skipped.append(safe or "(空名)")
+            continue
+        dest = batch / safe
+        with open(dest, "wb") as out:
+            while chunk := await f.read(1 << 20):
+                out.write(chunk)
+        ok, msg = lib.add_external_file(str(dest), alias=f"external/{safe}")
+        (saved if ok else skipped).append(f"{safe} ({msg})" if not ok else safe)
+    return {"ok": True, "batch_dir": str(batch),
+            "saved": saved, "skipped": skipped,
+            "message": f"已上传 {len(saved)} 个文件并加入范围，执行增量索引后可检索"}
 
 
-@router.post("/repo/vacuum")
-def repo_vacuum():
-    return {"ok": True, **repo_admin.vacuum()}
-
-
-@router.post("/repo/rebuild")
-def repo_rebuild():
-    """全量重建第一步：清空索引（KV 缓存保留）。随后调用 /api/index/refresh。"""
-    return repo_admin.rebuild_all()
-
-
-# ---------------- 系统自检（沿 MCP 同步链路） ----------------
+# ---------------- 系统自检 ----------------
 
 @router.get("/selftest")
 def api_selftest():
@@ -83,3 +118,84 @@ def prefs_save(req: PrefsReq):
     prefs = {**(lib.load_local_settings().get("prefs") or {}), **patch}
     lib.save_local_settings({"prefs": prefs})
     return {"ok": True, "prefs": prefs}
+
+
+# ---------------- MCP & 状态 ----------------
+
+def _claude_mcp_servers() -> dict:
+    p = Path.home() / ".claude.json"
+    try:
+        return (json.loads(p.read_text(encoding="utf-8"))
+                .get("mcpServers") or {})
+    except Exception:
+        return {}
+
+
+@router.get("/mcp/status")
+def mcp_status():
+    servers = _claude_mcp_servers()
+    rag_obs = Path.home() / ".claude/mcp_servers/rag-obsidian/server.py"
+    out = []
+    for name in ("rag-obsidian", "obsidian-search", "vault-rag"):
+        entry = servers.get(name)
+        out.append({
+            "name": name,
+            "registered": entry is not None,
+            "cmd": (entry or {}).get("command", ""),
+            "args": " ".join((entry or {}).get("args", [])),
+        })
+    return {
+        "servers": out,
+        "rag_obsidian_server": str(rag_obs),
+        "rag_obsidian_exists": rag_obs.exists(),
+        "hint": "vault-rag 未注册时，复制下方注册命令到 Claude Code 配置即可",
+    }
+
+
+@router.post("/mcp/register-vaultrag")
+def mcp_register_vaultrag():
+    """把 vault_rag.rag_mcp 注册进 Claude Code（~/.claude.json）。"""
+    import json as _json
+    p = Path.home() / ".claude.json"
+    try:
+        cfg = _json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        cfg = {}
+    entry = {"command": sys_executable(),
+             "args": [str(Path(__file__).resolve().parent.parent / "rag_mcp_server.py")]}
+    cfg.setdefault("mcpServers", {})["vault-rag"] = entry
+    backup = p.with_suffix(".json.bak")
+    backup.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+    p.write_text(_json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "entry": entry, "backup": str(backup)}
+
+
+def sys_executable() -> str:
+    import sys
+    return sys.executable
+
+
+@router.post("/mcp/protocol-test")
+def mcp_protocol_test(server: str = "rag"):
+    """实时协议级探测（initialize + tools/list，不走模型）。"""
+    import subprocess
+    import sys as _sys
+    if server == "rag":
+        cmd = [_sys.executable, "-m", "vault_rag.rag_mcp"]
+        cwd = str(Path(__file__).resolve().parent.parent)
+        expect = ["semantic_search", "rag_status"]
+    elif server == "obsidian":
+        srv = Path.home() / ".claude/mcp_servers/rag-obsidian/server.py"
+        if not srv.exists():
+            return {"ok": False, "detail": "server.py 不存在"}
+        cmd = [_sys.executable, str(srv)]
+        cwd = str(srv.parent)
+        expect = ["semantic_search"]
+    else:
+        raise HTTPException(422, "未知 server")
+    try:
+        from vault_rag import mcp_probe
+        result = mcp_probe.quick_probe(cmd, cwd, expect)
+        return result
+    except Exception as e:
+        return {"ok": False, "detail": f"{type(e).__name__}: {e}"}

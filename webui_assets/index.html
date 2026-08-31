@@ -15,7 +15,6 @@
 <div id="cursor-glow" aria-hidden="true"></div>
 
 <div class="app">
-  <!-- ============ 侧边导航（分级） ============ -->
   <aside class="sidebar">
     <div class="brand">
       <span class="logo"><svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true">
@@ -40,19 +39,22 @@
 
     <nav class="side-nav">
       <div class="nav-cap">工作台</div>
-      <button class="nav-item active" data-nav="chat">✦ 问答</button>
+      <button class="nav-item active" data-nav="chat">✦ 问答（检索）</button>
       <button class="nav-item" data-nav="board">▦ 看板</button>
 
+      <div class="nav-cap">操作管理</div>
+      <button class="nav-item" data-nav="ops">⟳ 索引 · 范围 · 上传</button>
+
       <div class="nav-cap">知识库</div>
-      <button class="nav-item" data-nav="repo">▤ 仓库管理</button>
-      <button class="nav-item" data-nav="index">⟳ 索引与范围</button>
+      <button class="nav-item" data-nav="repos">▤ 仓库管理（多 RAG）</button>
 
       <div class="nav-cap">模型</div>
       <button class="nav-item" data-nav="models-gen">✧ 生成供应商</button>
       <button class="nav-item" data-nav="models-emb">◈ 检索 Embedding</button>
 
       <div class="nav-cap">系统</div>
-      <button class="nav-item" data-nav="settings">⚙ 设置</button>
+      <button class="nav-item" data-nav="mcp">🔌 MCP &amp; 状态</button>
+      <button class="nav-item" data-nav="settings">⚙ 高级设置</button>
     </nav>
 
     <div class="side-foot">
@@ -62,10 +64,9 @@
     </div>
   </aside>
 
-  <!-- ============ 内容区 ============ -->
   <div class="content">
     <header class="topbar">
-      <h2 id="page-title">问答</h2>
+      <h2 id="page-title">问答（检索）</h2>
       <div class="status-pill" id="topbar-info">—</div>
     </header>
 
@@ -119,42 +120,22 @@
         </div>
       </section>
 
-      <!-- ============ 仓库管理 ============ -->
-      <section id="panel-repo" class="panel">
-        <div class="cards" id="repo-cards"></div>
-        <div class="board-card glass">
-          <h3>系统自检 <span class="muted small">（与 MCP 同一条代码链路）</span></h3>
-          <div class="row"><button id="btn-selftest" class="primary">运行自检</button>
-            <span id="selftest-msg" class="muted small"></span></div>
-          <div id="selftest-list" class="kv"></div>
-        </div>
-        <div class="board-card glass">
-          <h3>已索引笔记 <span class="muted small" id="repo-total"></span></h3>
-          <div class="row">
-            <input id="repo-q" placeholder="按路径搜索…">
-            <select id="repo-domain" class="sel" style="max-width:180px"><option value="">全部领域</option></select>
-            <button id="btn-repo-search">搜索</button>
+      <!-- ============ 操作管理（索引·范围·上传） ============ -->
+      <section id="panel-ops" class="panel">
+        <div class="board-card glass" id="upload-card">
+          <h3>批量上传 <span class="muted small">（多选/拖拽 → 存入 data/uploads → 自动加范围 → 增量索引后可检索）</span></h3>
+          <div class="dropzone" id="dropzone">
+            <p>拖拽文件到此处，或</p>
+            <input type="file" id="upload-input" multiple style="display:none">
+            <button class="primary" onclick="document.getElementById('upload-input').click()">选择文件（可多选）</button>
+            <p class="muted small" id="upload-hint">支持 .md/.txt 等文本文件；PDF 等二进制格式将作为后续多模态解析预留</p>
           </div>
-          <div id="repo-notes" class="list"></div>
-          <div class="row" style="justify-content:center">
-            <button id="repo-prev">‹ 上一页</button>
-            <span id="repo-page" class="muted small mono"></span>
-            <button id="repo-next">下一页 ›</button>
+          <div id="upload-result" class="msg"></div>
+          <div class="row" id="upload-actions" style="display:none">
+            <button id="btn-upload-index" class="primary">立即增量索引</button>
+            <span class="muted small" id="upload-batchdir"></span>
           </div>
         </div>
-        <div class="board-card glass">
-          <h3>库操作 <span class="muted small">（危险操作均有确认）</span></h3>
-          <div class="row">
-            <button id="btn-clear-cache">清空 Embed 缓存</button>
-            <button id="btn-vacuum">VACUUM 压缩数据库</button>
-            <button id="btn-rebuild" class="danger">清空索引并全量重建</button>
-          </div>
-          <div id="repo-op-msg" class="msg"></div>
-        </div>
-      </section>
-
-      <!-- ============ 索引与范围 ============ -->
-      <section id="panel-index" class="panel">
         <div class="manage-grid">
           <div class="board-card glass">
             <h3>索引范围 include.txt</h3>
@@ -169,7 +150,7 @@
             <div class="row"><input id="ext-path" placeholder="C:\path\to\file.md 绝对路径">
               <button id="btn-browse">浏览…</button></div>
             <div class="row"><input id="ext-alias" placeholder="别名（可选，如 external/AI手册.md）"></div>
-            <div class="row"><button id="btn-ext-add">加入范围</button>
+            <div class="row"><button id="btn-ext-add" class="primary">加入范围并索引</button>
               <span id="ext-msg" class="msg"></span></div>
 
             <h3 class="mt">新建笔记</h3>
@@ -189,6 +170,49 @@
             </div>
             <pre id="index-log" class="log">（空闲）</pre>
           </div>
+        </div>
+      </section>
+
+      <!-- ============ 仓库管理（多 RAG 仓库） ============ -->
+      <section id="panel-repos" class="panel">
+        <div class="board-card glass">
+          <h3>RAG 仓库 <span class="muted small" id="repos-hint"></span></h3>
+          <div class="plist" id="repos-list"></div>
+          <h3 class="mt">＋ 新建仓库</h3>
+          <div class="row"><input id="repo-new-name" placeholder="仓库名（如 法律法规库）" style="max-width:240px"></div>
+          <div class="row"><button id="btn-repo-create" class="primary">新建并切换</button>
+            <span id="repo-new-msg" class="msg"></span></div>
+          <p class="muted small">切换立即生效（问答/看板/仓库页全部跟随）。独立 MCP 进程需重启后跟随新仓库。
+            每个仓库有独立 include.txt（切换后在「索引与范围」页编辑）。</p>
+        </div>
+        <div class="board-card glass">
+          <h3>系统自检 <span class="muted small">（与 MCP 同一条代码链路）</span></h3>
+          <div class="row"><button id="btn-selftest" class="primary">运行自检</button>
+            <span id="selftest-msg" class="muted small"></span></div>
+          <div id="selftest-list" class="kv"></div>
+        </div>
+        <div class="board-card glass">
+          <h3>当前仓库 · 已索引笔记 <span class="muted small" id="repo-total"></span></h3>
+          <div class="row">
+            <input id="repo-q" placeholder="按路径搜索…">
+            <select id="repo-domain" class="sel" style="max-width:180px"><option value="">全部领域</option></select>
+            <button id="btn-repo-search">搜索</button>
+          </div>
+          <div id="repo-notes" class="list"></div>
+          <div class="row" style="justify-content:center">
+            <button id="repo-prev">‹ 上一页</button>
+            <span id="repo-page" class="muted small mono"></span>
+            <button id="repo-next">下一页 ›</button>
+          </div>
+        </div>
+        <div class="board-card glass">
+          <h3>当前仓库 · 库操作 <span class="muted small">（危险操作均有确认）</span></h3>
+          <div class="row">
+            <button id="btn-clear-cache">清空 Embed 缓存</button>
+            <button id="btn-vacuum">VACUUM 压缩数据库</button>
+            <button id="btn-rebuild" class="danger">清空索引并全量重建</button>
+          </div>
+          <div id="repo-op-msg" class="msg"></div>
         </div>
       </section>
 
@@ -267,7 +291,30 @@
         </div>
       </section>
 
-      <!-- ============ 设置 ============ -->
+      <!-- ============ MCP & 状态 ============ -->
+      <section id="panel-mcp" class="panel">
+        <div class="board-card glass">
+          <h3>Claude Code MCP 注册状态</h3>
+          <div id="mcp-list" class="plist"></div>
+          <div class="row">
+            <button id="btn-mcp-register" class="primary">注册 vault-rag MCP 到 Claude Code</button>
+            <span id="mcp-reg-msg" class="msg"></span>
+          </div>
+          <div class="row">
+            <button id="btn-mcp-test">运行协议测试（initialize + tools/list）</button>
+            <span id="mcp-test-msg" class="msg"></span>
+          </div>
+          <p class="muted small">注册后重启 Claude Code 生效。工具：semantic_search / hybrid_search /
+            rag_status / refresh_index —— 与控制台同一条代码链路。</p>
+        </div>
+        <div class="board-card glass">
+          <h3>系统状态</h3>
+          <div id="mcp-sysinfo" class="kv"></div>
+          <div class="row"><button id="btn-mcp-refresh">刷新状态</button></div>
+        </div>
+      </section>
+
+      <!-- ============ 高级设置 ============ -->
       <section id="panel-settings" class="panel">
         <div class="two-col">
           <div class="board-card glass">
@@ -289,13 +336,14 @@
               <span id="modal-key-msg" class="msg"></span></div>
           </div>
           <div class="board-card glass">
-            <h3>当前配置</h3>
+            <h3>系统</h3>
             <div id="settings-info" class="kv"></div>
             <hr class="sep">
-            <p class="muted small">所有路径/线程/端点均可用环境变量覆盖：
+            <p class="muted small">环境变量可覆盖一切路径/线程/端点：
               <code>VAULT_PATH</code> <code>RAG_DATA_DIR</code> <code>RAG_TORCH_THREADS</code>
-              <code>RAG_CHAT_API_URL</code> <code>RAG_EMBED_BACKEND</code> <code>RAG_WEBUI_PORT</code> 等，
-              见 README 配置表。</p>
+              <code>RAG_CHAT_API_URL</code> <code>RAG_CHAT_MODEL</code>
+              <code>RAG_EMBED_BACKEND</code> <code>RAG_LLAMA_EXE</code> <code>RAG_WEBUI_PORT</code> 等，
+              见 README。</p>
           </div>
         </div>
       </section>

@@ -1,0 +1,10 @@
+[
+  {
+    "name": "测试仓库A",
+    "data_dir": "D:\\AI Coding\\vault-rag\\data\\repo-测试仓库A"
+  },
+  {
+    "name": "主仓库",
+    "data_dir": "D:\\AI Coding\\vault-rag\\data"
+  }
+]

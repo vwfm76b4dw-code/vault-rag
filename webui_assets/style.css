@@ -305,3 +305,9 @@ button, .chip, .p-tag, .dot, .status-pill, .brand, .nav-item, .nav-cap { user-se
 @media (max-width: 1100px) {
   .board-grid, .two-col, .manage-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------- 批量上传拖拽区 ---------- */
+.dropzone { border: 2px dashed var(--line2); border-radius: 10px; padding: 22px;
+  text-align: center; color: var(--muted); transition: all .2s; cursor: pointer; }
+.dropzone:hover, .dropzone.drag { border-color: var(--green-line); background: var(--green-dim); color: var(--fg); }
+.dropzone p { margin: 4px 0; }

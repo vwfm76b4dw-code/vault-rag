@@ -16,6 +16,7 @@ mcp>=1.0
 
 # ---- Web 控制台（webui.py）----
 fastapi>=0.110
+python-multipart>=0.0.9      # Web 控制台批量上传
 uvicorn>=0.29
 pywebview>=5.0          # 桌面窗口；不可用时 python webui.py --browser 降级浏览器
 
