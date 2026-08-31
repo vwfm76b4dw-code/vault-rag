@@ -104,6 +104,7 @@ async function renderEmbed() {
     `<div class="row"><span class="muted">服务端</span><span style="font-size:11px">${escapeHtml(L.exe || "未找到（放入 dist/llama/ 或设 RAG_LLAMA_EXE）")}</span></div>` +
     `<div class="row"><span class="muted">模型</span><span style="font-size:11px">${escapeHtml(L.gguf || "未下载")}</span></div>`;
   // GGUF 列表
+  knownGgufs = (embedCfg.ggufs || []).map((f) => f.file);
   const g = $("gguf-list");
   g.innerHTML = "";
   (embedCfg.ggufs || []).forEach((f) => {
@@ -141,35 +142,78 @@ function renderDl() {
         info.textContent = `${((s.downloaded || 0) / 1e6).toFixed(0)}/${((s.total || 0) / 1e6).toFixed(0)}MB · ${s.speed_mbs || 0}MB/s`;
       }
     });
+    const q = $("dl-queue");
+    if (q) q.textContent = s.running
+      ? `⏬ ${s.file} · ${s.pct}% · ${((s.downloaded || 0) / 1e6).toFixed(0)}/${((s.total || 0) / 1e6).toFixed(0)}MB · ${s.speed_mbs || 0}MB/s`
+      : (dlPolling ? "✓ 下载完成" : "");
     if (s.running) { dlPolling = true; setTimeout(renderDl, 800); }
     else if (dlPolling) { dlPolling = false; renderEmbed(); }   // 完成刷新已下载列表
   }).catch(() => {});
 }
+
+const quantOf = (f) => ((f.match(/(IQ\d_\w+|Q\d_K_S?|Q\d_K_M|Q\d_0|Q\d|f16|bf16)/i) || [""])[0]).toUpperCase();
 
 function renderHfFiles() {
   const box = $("hf-files");
   if (!hfFiles.length) { box.innerHTML = `<span class="empty">（无 GGUF 文件）</span>`; return; }
   box.innerHTML = "";
   hfFiles.forEach((f) => {
+    const downloaded = knownGgufs.includes(f.file);
+    const q = quantOf(f.file);
     const row = document.createElement("div");
     row.className = "provider";
     row.innerHTML =
       `<div class="p-body"><div class="p-name">${escapeHtml(f.file)}</div></div>` +
+      (q ? `<span class="qbadge">${q}</span>` : ``) +
       `<span class="p-tag muted">${f.size_mb} MB</span>` +
-      `<button class="primary" data-hf="${escapeHtml(f.file)}" style="padding:4px 12px">下载</button>` +
+      (downloaded ? `<span class="p-tag" style="color:var(--green)">✓ 已下载</span>`
+                  : `<button class="primary" data-hf="${escapeHtml(f.file)}" style="padding:4px 12px">下载</button>`) +
       `<div class="dl-bar" style="display:none;min-width:150px"><div></div></div>`;
-    row.querySelector("[data-hf]").addEventListener("click", async (e) => {
+    const btn = row.querySelector("[data-hf]");
+    if (btn) btn.addEventListener("click", async (e) => {
       e.stopPropagation();
+      btn.disabled = true; btn.textContent = "下载中";
       try {
         const r = await post("/api/embed/hf/download",
           { repo: $("hf-repo").value.trim(), file: f.file, mirror: $("hf-mirror").checked });
-        if (!r.ok) { alert(r.message); return; }
+        if (!r.ok) { alert(r.message); btn.disabled = false; btn.textContent = "下载"; return; }
         renderDl();
-      } catch (err) { alert(err.message); }
+      } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = "下载"; }
     });
     box.appendChild(row);
   });
   renderDl();
+}
+
+async function hfSearch() {
+  const kw = $("hf-kw").value.trim();
+  if (!kw) return;
+  const box = $("hf-files");
+  box.innerHTML = `<span class="empty">🔍 搜索中（经本地后端 · 在线数据）…</span>`;
+  try {
+    const r = await api(`/api/embed/hf/search?kw=${encodeURIComponent(kw)}&mirror=${$("hf-mirror")?.checked !== false}`);
+    hfFiles = [];
+    box.innerHTML = "";
+    (r.repos || []).forEach((rep) => {
+      const row = document.createElement("div");
+      row.className = "provider";
+      row.innerHTML =
+        `<div class="p-body"><div class="p-name">${escapeHtml(rep.id)}</div>` +
+        `<span class="p-tag muted">↓${fmtW(rep.downloads || 0)}</span>` +
+        `<span class="p-tag">查看文件</span>`;
+      row.addEventListener("click", async () => {
+        $("hf-repo").value = rep.id;
+        box.innerHTML = `<span class="empty">拉取文件列表中…</span>`;
+        try {
+          const f = await api(`/api/embed/hf/files?repo=${encodeURIComponent(rep.id)}&mirror=${$("hf-mirror")?.checked !== false}`);
+          hfFiles = f.files || [];
+          renderHfFiles();
+        } catch (e) { box.innerHTML = `<span class="empty">✗ ${escapeHtml(e.message)}</span>`; }
+      });
+      box.appendChild(row);
+    });
+    if (!box.children.length) box.innerHTML = `<span class="empty">无匹配仓库</span>`;
+  } catch (e) { box.innerHTML = `<span class="empty">✗ ${escapeHtml(e.message)}</span>`; }
 }
 
 async function loadPrefs() {
@@ -227,6 +271,7 @@ $("modal-key-save").addEventListener("click", async () => {
 
 /* Embedding 端点档案新增 */
 let hfFiles = [];
+let knownGgufs = [];   // 已下载模型清单（标记文件行，防重复下载）
 const EMBED_PRESETS = [
   { name: "LM Studio", url: "http://127.0.0.1:1234/v1/embeddings", model: "text-embedding-qwen3-embedding-0.6b" },
   { name: "llama-server 内置", url: "http://127.0.0.1:18900/v1/embeddings", model: "qwen3" },
@@ -259,6 +304,19 @@ $("btn-ep-save").addEventListener("click", async () => {
 });
 
 /* HF GGUF 下载 */
+$("btn-hf-search").addEventListener("click", hfSearch);
+$("hf-kw").addEventListener("keydown", (e) => { if (e.key === "Enter") hfSearch(); });
+
+async function loadHfFiles() {
+  const box = $("hf-files");
+  box.innerHTML = `<span class="empty">拉取中…</span>`;
+  try {
+    const r = await api(`/api/embed/hf/files?repo=${encodeURIComponent($("hf-repo").value.trim())}&mirror=${$("hf-mirror").checked}`);
+    hfFiles = r.files || [];
+    renderHfFiles();
+  } catch (e) { box.innerHTML = `<span class="empty">✗ ${escapeHtml(e.message)}</span>`; }
+}
+
 $("btn-hf-list").addEventListener("click", async () => {
   const box = $("hf-files");
   box.innerHTML = `<span class="empty">拉取中…</span>`;
@@ -318,6 +376,7 @@ function md(text) {
   if (inList) html += "</ul>";
   return html;
 }
+const fmtW = n => n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
 const escapeHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /* ================= 侧边分级导航 ================= */

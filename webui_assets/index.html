@@ -249,15 +249,20 @@
             <h3 class="mt">已下载模型 <span class="muted small">（点击选用）</span></h3>
             <div id="gguf-list" class="provider-list"></div>
 
-            <h3 class="mt sub-h">下载新模型 <span class="muted small">（LM Studio 式，hf-mirror 可选）</span></h3>
+            <h3 class="mt sub-h">下载新模型 <span class="muted small">（LM Studio 式：关键词或仓库 id；hf-mirror 可选）</span></h3>
+            <div class="row">
+              <input id="hf-kw" placeholder="搜索模型：关键词（qwen3 embedding）或仓库 id">
+              <button id="btn-hf-search" class="primary">🔍 搜索模型</button>
+            </div>
             <div class="row">
               <input id="hf-repo" value="Qwen/Qwen3-Embedding-0.6B-GGUF" placeholder="HuggingFace 仓库 id">
-              <button id="btn-hf-list" class="primary">浏览文件</button>
+              <button id="btn-hf-list">浏览文件</button>
             </div>
             <div class="row">
               <label class="check"><input type="checkbox" id="hf-mirror" checked> hf-mirror 镜像</label>
             </div>
-            <div id="hf-files" class="provider-list empty">输入仓库后点「浏览文件」</div>
+            <div id="hf-files" class="provider-list empty">搜索模型，或直接输入仓库 id 后点「浏览文件」</div>
+            <div id="dl-queue" class="muted small" style="margin-top:8px"></div>
           </div>
         </div>
       </section>

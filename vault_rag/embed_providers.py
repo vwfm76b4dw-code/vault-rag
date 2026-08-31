@@ -203,6 +203,9 @@ def hf_download(repo: str, file: str, mirror: bool = True) -> dict:
             pos = dest.stat().st_size if dest.exists() else 0
             headers = {"Range": f"bytes={pos}-"} if pos else {}
             with requests.get(url, stream=True, timeout=(15, 60), headers=headers) as r:
+                if r.status_code == 416:
+                    _DL.update({"done": True, "pct": 100.0})   # 文件已完整（越界续传被拒）
+                    return {"ok": True, "message": "文件已完整，无需下载"}
                 if r.status_code not in (200, 206):
                     raise RuntimeError(f"HTTP {r.status_code}")
                 total = int(r.headers.get("content-length", 0)) + pos
