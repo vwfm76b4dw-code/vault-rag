@@ -6,9 +6,16 @@ data/*.npy
 data/*.log
 data/*.txt
 data/*.md
+data/*.json
 data/ppt_imgs/
 data/_*
 data/.*
+# 嵌套路径：* 不跨目录，须显式覆盖（data/repo-X/qwen_rag.db 曾漏网入库）
+data/**/*.db
+data/**/*.db.*
+data/**/*.npy
+data/uploads/
+data/repo-*/
 models/
 
 # 内部状态

@@ -108,8 +108,8 @@ def clear_cache() -> dict:
 
 def vacuum() -> dict:
     """VACUUM 压缩数据库（删除/重建后回收空间）。"""
-    before = DB_PATH.stat().st_size / 1e6 if DB_PATH.exists() else 0
-    con = sqlite3.connect(DB_PATH, timeout=30)
+    before = config.DB_PATH.stat().st_size / 1e6 if config.DB_PATH.exists() else 0
+    con = sqlite3.connect(config.DB_PATH, timeout=30)
     try:
         con.execute("VACUUM")
     finally:

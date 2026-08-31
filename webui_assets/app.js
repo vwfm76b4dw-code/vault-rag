@@ -956,10 +956,11 @@ async function sendUpload(fileList) {
     const r = await fetch("/api/upload", { method: "POST", body: fd });
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || r.statusText);
-    $("upload-result").className = "msg ok";
-    $("upload-result").textContent = `✓ ${d.saved.length} 个文件已入库并加入范围` +
-      (d.skipped.length ? `（跳过: ${d.skipped.join(", ")}）` : "");
-    $("upload-actions").style.display = "flex";
+    const detail = (d.saved.length ? "✓ " : "✗ ") + d.message +
+      (d.skipped.length ? `（跳过: ${d.skipped.join("；")}）` : "");
+    $("upload-result").className = d.ok ? "msg ok" : "msg err";
+    $("upload-result").textContent = detail;
+    $("upload-actions").style.display = d.ok ? "flex" : "none";
     $("upload-batchdir").textContent = d.batch_dir;
     $("btn-upload-index").onclick = async () => {
       $("upload-actions").style.display = "none";

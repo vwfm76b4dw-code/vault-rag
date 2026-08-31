@@ -181,5 +181,186 @@ class TestKeywordFallback(unittest.TestCase):
                 webui_lib.DB_PATH = orig
 
 
+class TestUploadClassification(unittest.TestCase):
+    """上传类型判定：扩展名优先，magic bytes 兜底（图像黑洞修复）。"""
+
+    def test_image_by_extension(self):
+        from vault_rag.webui_ext import classify_upload
+        self.assertEqual(classify_upload("a.PNG", b"whatever"), "image")
+        self.assertEqual(classify_upload("b.jpg", b""), "image")
+        self.assertEqual(classify_upload("c.webp", b""), "image")
+
+    def test_image_by_magic_even_renamed(self):
+        from vault_rag.webui_ext import classify_upload
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+        self.assertEqual(classify_upload("fake.txt", png), "image")   # 改名也拦
+        self.assertEqual(classify_upload("noext", b"\xff\xd8\xffE0"), "image")
+        self.assertEqual(classify_upload("run.exe", b"MZ\x90\x00"), "binary")
+
+    def test_text_passes(self):
+        from vault_rag.webui_ext import classify_upload
+        self.assertEqual(classify_upload("冒泡排序.cpp", b"#include <cstdio>"), "text")
+        self.assertEqual(classify_upload("笔记.md", b"---\ntitle: x\n"), "text")
+        # 文本误杀防线：普通笔记以 "BM"/"RIFF" 等 ASCII 开头不能被当二进制
+        self.assertEqual(classify_upload("bmw笔记.md", "BMW 是巴伐利亚发动机制造厂".encode()), "text")
+
+
+class TestUploadEndpoint(unittest.TestCase):
+    """端点行为：图像/二进制显式拒绝（带原因）、不入盘、不写 include。"""
+
+    def _client(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from vault_rag import scope, webui_ext
+        app = FastAPI()
+        app.include_router(webui_ext.router)
+        return TestClient(app), scope
+
+    def test_png_rejected_md_saved(self):
+        client, scope = self._client()
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            inc = td / "include.txt"; inc.write_text("# base\n", encoding="utf-8")
+            from vault_rag import webui_ext as ext
+            orig = (ext.UPLOAD_DIR, scope.INCLUDE_PATH)
+            ext.UPLOAD_DIR = td / "uploads"
+            scope.INCLUDE_PATH = inc
+            try:
+                png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+                r = client.post("/api/upload", files=[
+                    ("files", ("star.png", png, "image/png")),
+                    ("files", ("h.md", b"# hello\nworld", "text/markdown")),
+                ])
+                self.assertEqual(r.status_code, 200)
+                d = r.json()
+                self.assertTrue(d["ok"])
+                self.assertEqual(len(d["saved"]), 1)
+                self.assertIn("h.md", d["saved"][0])
+                self.assertEqual(len(d["skipped"]), 1)
+                self.assertIn("star.png", d["skipped"][0])
+                self.assertIn("图片暂不支持", d["skipped"][0])
+                # 关键：png 不落盘（旧版会写进 uploads 变成索引黑洞）
+                saved_files = sorted(p.name for p in ext.UPLOAD_DIR.rglob("*") if p.is_file())
+                self.assertEqual(saved_files, ["h.md"])
+                # include.txt 只新增了 md 的 @ 规则
+                text = inc.read_text(encoding="utf-8")
+                self.assertIn("h.md", text)
+                self.assertNotIn("star.png", text)
+            finally:
+                ext.UPLOAD_DIR, scope.INCLUDE_PATH = orig
+
+    def test_png_only_fails_without_batch(self):
+        client, scope = self._client()
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            inc = td / "include.txt"; inc.write_text("", encoding="utf-8")
+            from vault_rag import webui_ext as ext
+            orig = (ext.UPLOAD_DIR, scope.INCLUDE_PATH)
+            ext.UPLOAD_DIR = td / "uploads"
+            scope.INCLUDE_PATH = inc
+            try:
+                png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+                r = client.post("/api/upload", files=[("files", ("a.png", png, "image/png"))])
+                self.assertEqual(r.status_code, 200)
+                d = r.json()
+                self.assertFalse(d["ok"])
+                self.assertEqual(d["saved"], [])
+                self.assertEqual(d["batch_dir"], "")
+                self.assertIn("没有文件入库", d["message"])
+                self.assertFalse(ext.UPLOAD_DIR.exists())      # 全拒时不建批次目录
+            finally:
+                ext.UPLOAD_DIR, scope.INCLUDE_PATH = orig
+
+
+class TestRepoAdminEndpoints(unittest.TestCase):
+    """仓库页后端端点：v1.2.0 前端就绪但路由漏接（404 坏页），补齐后回归。"""
+
+    def _client(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from vault_rag import webui_ext
+        app = FastAPI()
+        app.include_router(webui_ext.router)
+        return TestClient(app)
+
+    def _tmp_db(self, td: Path) -> Path:
+        import sqlite3
+        db = td / "qwen_rag.db"
+        con = sqlite3.connect(db)
+        con.executescript("""
+            CREATE TABLE notes(rel_path TEXT PRIMARY KEY, mtime REAL, n_chunks INTEGER);
+            CREATE TABLE chunks(chunk_id INTEGER PRIMARY KEY, rel_path TEXT,
+                seq INTEGER, section TEXT, text TEXT);
+            CREATE TABLE blob_vectors(chunk_id INTEGER PRIMARY KEY);
+            CREATE TABLE embed_cache(k TEXT PRIMARY KEY);
+        """)
+        con.execute("INSERT INTO notes VALUES('知识/a.md', 100, 2)")
+        con.execute("INSERT INTO notes VALUES('研究/b.md', 200, 1)")
+        con.executemany("INSERT INTO chunks VALUES(?,?,0,'','x')",
+                        [(1, "知识/a.md"), (2, "知识/a.md"), (3, "研究/b.md")])
+        con.executemany("INSERT INTO blob_vectors VALUES(?)", [(1,), (2,), (3,)])
+        con.executemany("INSERT INTO embed_cache VALUES(?)", [("k1",), ("k2",)])
+        con.commit(); con.close()
+        return db
+
+    def _patch_db(self, td: Path):
+        from vault_rag import config
+        orig = config.DB_PATH
+        config.DB_PATH = self._tmp_db(td)
+        return orig, config
+
+    def test_stats_notes_delete_flow(self):
+        client = self._client()
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            orig, config = self._patch_db(td)
+            try:
+                s = client.get("/api/repo/stats").json()
+                self.assertEqual(s["notes"], 2)
+                self.assertEqual(s["chunks"], 3)
+                self.assertTrue(s["consistent"])
+
+                d = client.get("/api/repo/notes", params={"page": 1, "size": 15}).json()
+                self.assertEqual(d["total"], 2)
+                self.assertIn("知识", d["domains"])
+                self.assertEqual(d["notes"][0]["vectors"], 1)   # 研究/b.md 最新在前
+                self.assertIn("mtime_str", d["notes"][0])
+
+                d2 = client.get("/api/repo/notes", params={"q": "a.md"}).json()
+                self.assertEqual(d2["total"], 1)
+
+                r = client.request("DELETE", "/api/repo/notes",
+                                   json={"rel_path": "知识/a.md"})
+                self.assertEqual(r.status_code, 200)
+                self.assertEqual(r.json()["chunks_removed"], 2)
+                s2 = client.get("/api/repo/stats").json()
+                self.assertEqual(s2["notes"], 1)
+                self.assertEqual(s2["chunks"], 1)
+
+                r404 = client.request("DELETE", "/api/repo/notes",
+                                      json={"rel_path": "不存在.md"})
+                self.assertEqual(r404.status_code, 422)
+
+                self.assertEqual(client.post("/api/repo/rebuild").json()["ok"], True)
+                s3 = client.get("/api/repo/stats").json()
+                self.assertEqual(s3["notes"], 0)
+                self.assertEqual(s3["embed_cache"], 2)         # rebuild 保留 KV 缓存
+                self.assertEqual(client.post("/api/repo/clear-cache").json()["cleared"], 2)
+            finally:
+                config.DB_PATH = orig
+
+    def test_vacuum_reports_sizes(self):
+        client = self._client()
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            orig, config = self._patch_db(td)
+            try:
+                r = client.post("/api/repo/vacuum").json()
+                self.assertIn("before_mb", r)
+                self.assertIn("after_mb", r)
+            finally:
+                config.DB_PATH = orig
+
+
 if __name__ == "__main__":
     unittest.main()

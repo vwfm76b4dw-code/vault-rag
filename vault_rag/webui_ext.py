@@ -59,30 +59,113 @@ def repos_switch(req: RepoSwitchReq):
     return {"ok": True, "active": prof, "message": "已切换（立即生效；独立 MCP 进程重启后跟随）"}
 
 
+# ---------------- 仓库页：索引统计 / 笔记浏览 / 库操作 ----------------
+# 前端 app.js 的仓库管理页（loadRepo/renderRepo/库操作按钮）依赖以下端点，
+# v1.2.0 IA 重构时漏接（repo_admin 函数早已就绪）→ 404 静默坏页。
+
+@router.get("/repo/stats")
+def repo_stats():
+    return repo_admin.stats()
+
+
+@router.get("/repo/notes")
+def repo_notes(q: str = "", domain: str = "", page: int = 1, size: int = 15):
+    return repo_admin.notes_page(q=q.strip(), domain=domain.strip(),
+                                 page=max(1, page), size=max(1, min(100, size)))
+
+
+class RepoNoteDelReq(BaseModel):
+    rel_path: str
+
+
+@router.delete("/repo/notes")
+def repo_note_delete(req: RepoNoteDelReq):
+    try:
+        return repo_admin.delete_note(req.rel_path)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.post("/repo/clear-cache")
+def repo_clear_cache():
+    return repo_admin.clear_cache()
+
+
+@router.post("/repo/vacuum")
+def repo_vacuum():
+    return repo_admin.vacuum()
+
+
+@router.post("/repo/rebuild")
+def repo_rebuild():
+    return repo_admin.rebuild_all()
+
+
 # ---------------- 批量上传（多文件 → data/uploads + 自动 @ 规则） ----------------
+
+# 图像/二进制检测：扩展名优先，magic bytes 兜底（防止改名 .txt 的图片静默入库）
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg",
+              ".ico", ".tif", ".tiff", ".heic", ".avif"}
+_IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a",
+                b"\x00\x00\x01\x00")          # PNG/JPEG/GIF/ICO
+_BINARY_MAGIC = (b"%PDF", b"PK\x03\x04", b"\x1f\x8b", b"MZ",
+                 b"\x7fELF")                  # PDF/ZIP/GZIP/EXE/ELF
+IMAGE_HINT = "图片暂不支持索引（多模态索引规划中），已跳过"
+
+
+def classify_upload(filename: str, head: bytes) -> str:
+    """按扩展名 + magic bytes 判定上传类型：'image' / 'binary' / 'text'。
+
+    文本误杀防线：只认强 magic 与 NUL 字节，不用 "BM"/"RIFF" 这类
+    与 ASCII 文本重叠的前缀（"BMW 开头的笔记" 不能被当二进制）。
+    """
+    ext = Path(filename).suffix.lower()
+    if ext in IMAGE_EXTS:
+        return "image"
+    if head.startswith(_IMAGE_MAGIC):
+        return "image"
+    if head.startswith(_BINARY_MAGIC) or b"\x00" in head:
+        return "binary"
+    return "text"
+
 
 @router.post("/upload")
 async def upload_files(files: list[UploadFile] = File(...)):
-    """批量上传文档：存 data/uploads/<批次>/ 并自动加入索引范围（@ 规则）。"""
+    """批量上传文档：存 data/uploads/<批次>/ 并自动加入索引范围（@ 规则）。
+
+    图像/二进制文件显式拒绝并说明原因——绝不允许静默入库后索引黑洞。
+    """
     if not files:
         raise HTTPException(400, "未选择文件")
     batch = UPLOAD_DIR / time.strftime("%Y%m%d-%H%M%S")
-    batch.mkdir(parents=True, exist_ok=True)
     saved, skipped = [], []
     for f in files:
         safe = Path(f.filename).name
         if not safe or safe.startswith("."):
-            skipped.append(safe or "(空名)")
+            skipped.append(f"{safe or '(空名)'} (非法文件名)")
             continue
+        head = await f.read(1 << 16)
+        kind = classify_upload(safe, head)
+        if kind in ("image", "binary"):
+            reason = IMAGE_HINT if kind == "image" else "二进制文件暂不支持索引，已跳过"
+            skipped.append(f"{safe} ({reason})")
+            continue
+        batch.mkdir(parents=True, exist_ok=True)
         dest = batch / safe
         with open(dest, "wb") as out:
+            out.write(head)
             while chunk := await f.read(1 << 20):
                 out.write(chunk)
         ok, msg = lib.add_external_file(str(dest), alias=f"external/{safe}")
         (saved if ok else skipped).append(f"{safe} ({msg})" if not ok else safe)
-    return {"ok": True, "batch_dir": str(batch),
-            "saved": saved, "skipped": skipped,
-            "message": f"已上传 {len(saved)} 个文件并加入范围，执行增量索引后可检索"}
+    n_skip = len(skipped)
+    if saved:
+        message = (f"已入库 {len(saved)} 个文件，执行增量索引后可检索"
+                   + (f"；跳过 {n_skip} 个不支持的文件" if n_skip else ""))
+    else:
+        message = "没有文件入库" + (f"（{n_skip} 个均不支持）" if n_skip else "")
+    return {"ok": bool(saved), "batch_dir": str(batch) if saved else "",
+            "saved": saved, "skipped": skipped, "message": message}
 
 
 # ---------------- 系统自检 ----------------
