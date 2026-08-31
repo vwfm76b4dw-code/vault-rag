@@ -82,7 +82,7 @@ class TestFetchRowsAlignment(unittest.TestCase):
         target_cid = 7
         qv = self.expected[target_cid]
         self.search.embed_query = lambda _q: qv        # 桩掉模型编码
-        out = self.search.search("任意查询")
+        out = self.search.search("任意查询", top_k=5, mode="semantic")  # 纯语义通道
         self.assertEqual(out[0]["text"], f"chunk-{target_cid}-unique-text")
 
     def test_scope_dir_filter(self):

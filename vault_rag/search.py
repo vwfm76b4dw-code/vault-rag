@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
+import re
 import sqlite3
 import sys
 import time
@@ -28,6 +29,10 @@ from vault_rag.config import API_URL as EMBED_HTTP_URL, MODEL as EMBED_HTTP_MODE
 MAX_LEN = 512
 EXCLUDE_PATTERNS = ["%.codex/%"]   # 排除系统目录
 
+# 检索模式:'hybrid'=语义+关键词 RRF 融合(默认,精确名/术语查询精度高)
+#          'semantic'=纯语义;'keyword'=纯关键词
+SEARCH_MODE = os.environ.get("RAG_SEARCH_MODE", "semantic")
+
 # 查询向量来源链（设置面板可选）：'auto'=HTTP端点→内置llama.cpp（默认）
 #   'http'=仅HTTP端点；'llamacpp'=仅内置llama.cpp；'off'=纯关键词；'local'=本地torch
 EMBED_BACKEND = os.environ.get("RAG_EMBED_BACKEND", "auto")
@@ -36,6 +41,7 @@ EMBED_HTTP_TIMEOUT = float(os.environ.get("RAG_EMBED_HTTP_TIMEOUT", "5"))
 # 缓存上限（字节），超过则退化为每次现读。可用 RAG_VEC_CACHE_MB 调整（0=禁用）。
 _CACHE_MAX_BYTES = int(os.environ.get("RAG_VEC_CACHE_MB", "2048")) * 1024 * 1024
 _CACHE: dict = {"stamp": None}
+_all_ids_cache: list = []   # 当前矩阵对应的 chunk_id(供关键词候选映射)
 
 _MODEL = None
 _TOKENIZER = None
@@ -201,6 +207,8 @@ def _load_matrix() -> tuple[list, list, list, np.ndarray] | None:
     secs = [r[2] for r in rows]
     texts = [r[3] for r in rows]
     vecs = np.vstack([np.frombuffer(r[4], dtype=np.float32) for r in rows])
+    global _all_ids_cache
+    _all_ids_cache = [r[0] for r in rows]
     data = (rels, secs, texts, vecs)
     if cacheable and vecs.nbytes <= _CACHE_MAX_BYTES:
         _CACHE["stamp"] = stamp
@@ -208,9 +216,57 @@ def _load_matrix() -> tuple[list, list, list, np.ndarray] | None:
     return data
 
 
+def _terms(query: str) -> list[str]:
+    """查询切分:英文整词;中文长串切 2-gram(整句精确匹配基本命不中)。"""
+    toks = []
+    for run in re.findall(r"[一-鿿]{2,}|[A-Za-z0-9]{2,}", query):
+        if run[0].isascii():
+            toks.append(run.lower())
+        elif len(run) <= 2:
+            toks.append(run)
+        else:
+            toks += [run[i:i + 2] for i in range(len(run) - 1)]
+    return toks
+
+
+def _kw_scores(terms: list[str], rels_s: list[str],
+               cid_to_idx: dict[int, int]) -> np.ndarray:
+    """关键词命中分:SQL LIKE 拉候选 → 命中占比 + 文件名命中加权。"""
+    scores = np.zeros(len(rels_s), dtype=np.float64)
+    if not terms:
+        return scores
+    con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=5)
+    try:
+        where = " OR ".join("(text LIKE ? OR rel_path LIKE ?)" for _ in terms[:12])
+        args = [f"%{t}%" for t in terms[:12] for _ in range(2)]
+        rows = con.execute(
+            f"SELECT chunk_id, text, rel_path FROM chunks WHERE {where} LIMIT 4000",
+            args).fetchall()
+    except Exception:
+        return scores
+    finally:
+        con.close()
+    hit = {}
+    for cid, text, rp in rows:
+        s = sum(1 for t in terms if t in text or t in rp.lower())
+        if s:
+            hit[cid] = s / len(terms)
+    for cid, s in hit.items():
+        i = cid_to_idx.get(cid)
+        if i is None:
+            continue
+        name = rels_s[i].lower()
+        name_hit = sum(1 for t in terms if t in name)
+        scores[i] = min(1.0, s + 0.4 * name_hit / max(1, len(terms)))
+    return scores
+
+
 def search(query: str, top_k: int = TOP_K, scope_dir: str | None = None,
-           min_score: float = 0.0) -> list[dict]:
-    """语义检索。scope_dir 传相对目录前缀（如 '知识/'）过滤范围。"""
+           min_score: float = 0.0, mode: str | None = None) -> list[dict]:
+    """检索。mode: hybrid(默认,语义+关键词 RRF 融合)/semantic/keyword。
+
+    scope_dir 传相对目录前缀（如 '知识/'）过滤范围。
+    """
     data = _load_matrix()
     if data is None:
         return []
@@ -226,14 +282,89 @@ def search(query: str, top_k: int = TOP_K, scope_dir: str | None = None,
         texts_s = [texts[i] for i in idx_arr]
     else:
         sub, rels_s, secs_s, texts_s = vecs, rels, secs, texts
+    n = sub.shape[0]
 
-    qv = embed_query(query)
-    sims = sub @ qv                       # 向量已归一化，点积即余弦
-    n = sims.shape[0]
+    mode = mode or SEARCH_MODE
+    terms = _terms(query)
 
-    k = min(n, top_k * 8)
-    order = np.argpartition(-sims, k - 1)[:k] if k < n else np.arange(n)
-    order = order[np.argsort(-sims[order])]          # 候选内按分数降序
+    # 语义分(semantic/hybrid;失败时 hybrid 退关键词)
+    sims = None
+    if mode in ("hybrid", "semantic"):
+        try:
+            qv = embed_query(query)
+            sims = sub @ qv                       # 向量已归一化,点积即余弦
+        except Exception:
+            if mode == "semantic":
+                raise
+            sims = None
+
+    # 关键词分(hybrid/keyword)
+    kw = np.zeros(n, dtype=np.float64)
+    if mode in ("hybrid", "keyword") and terms:
+        con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=5)
+        try:
+            where = " OR ".join("(text LIKE ? OR rel_path LIKE ?)" for _ in terms[:12])
+            args = [f"%{t}%" for t in terms[:12] for _ in range(2)]
+            rows = con.execute(
+                f"SELECT chunk_id, text, rel_path FROM chunks WHERE {where} LIMIT 4000",
+                args).fetchall()
+            hit = {}
+            for cid, text, rp in rows:
+                s = sum(1 for t in terms if t in text or t in rp.lower())
+                if s:
+                    hit[cid] = s / len(terms)
+            cid_to_idx = {int(c): i for i, c in enumerate(_all_ids_cache or [])}
+            for cid, s in hit.items():
+                i = cid_to_idx.get(cid)
+                if i is not None:
+                    name = rels_s[i].lower()
+                    name_hit = sum(1 for t in terms if t in name)
+                    kw[i] = min(1.0, s + 0.4 * name_hit / max(1, len(terms)))
+        except Exception:
+            pass
+        finally:
+            con.close()
+
+    # 排序策略:
+    #   semantic 强命中(top1 余弦 ≥ 阈值)→ 信任纯语义
+    #   语义弱/离线 → 关键词 RRF 融合(精确文件名/术语查询拉精准命中)
+    HYBRID_SEM_MIN = 0.35
+    # 精确文件名直达:查询全串(去空格)是某文件路径的子串 → 该文件强制置顶。
+    # 独立于融合模式,最可预测:查文件名 = 文件直达。
+    q_flat = re.sub(r"[\s.]+", "", query).lower()
+    name_exact = len(q_flat) >= 4 and any(
+        q_flat in re.sub(r"[\/.]+", "", rp.lower())
+        for rp in rels_s)
+    if mode == "keyword" or (sims is None and mode == "hybrid"):
+        if mode == "keyword":
+            order = np.argsort(-kw)[:n]
+            scores_final = kw[order]
+        else:
+            return []                        # 无任何可用信号
+    elif mode == "hybrid" and use_sem_only:
+        order = np.argsort(-sims)[:n]        # 语义强命中:不被关键词弱匹配稀释
+        scores_final = sims[order]
+    elif mode == "hybrid":
+        sem_rank = np.empty(n, dtype=np.int64)
+        sem_rank[np.argsort(-sims)] = np.arange(1, n + 1)
+        kw_rank = np.full(n, 10 ** 6, dtype=np.int64)
+        kw_idx = np.argsort(-kw)[: max(1, min(n, int((kw > 0).sum())) or 1)]
+        kw_rank[kw_idx] = np.arange(1, len(kw_idx) + 1)
+        fused = 1.0 / (60 + sem_rank) + np.where(kw_rank < 10**6,
+                                                 1.0 / (60 + kw_rank), 0.0)
+        order = np.argsort(-fused)[:n]
+        scores_final = fused[order]
+    else:
+        order = np.argsort(-sims)[:n]
+        scores_final = sims[order]
+
+    order = order[: top_k * 8 if top_k * 8 < n else n]
+    if name_exact:
+        # 全量扫描置顶:目标文件可能语义分低而根本不在语义候选切片内
+        pinned = [i for i, rp in enumerate(rels_s)
+                  if q_flat in re.sub(r"[\/.]+", "", rp.lower())]
+        rest = [i for i in order if i not in set(pinned)]
+        order = list(pinned) + [int(i) for i in rest]
     out, seen_notes, seen_text = [], set(), set()
     for i in order:
         i = int(i)
@@ -244,22 +375,10 @@ def search(query: str, top_k: int = TOP_K, scope_dir: str | None = None,
             continue
         seen_notes.add(rels_s[i])
         seen_text.add(th)
-        out.append({"score": float(sims[i]), "rel_path": rels_s[i],
+        out.append({"score": float(scores_final[i]), "rel_path": rels_s[i],
                     "section": secs_s[i], "text": texts_s[i]})
         if len(out) >= top_k:
             break
-    if len(out) < top_k and k < n:        # 候选被去重耗尽 → 全量兜底
-        full = np.argsort(-sims)
-        for i in full:
-            i = int(i)
-            if rels_s[i] in seen_notes or hash(texts_s[i]) in seen_text:
-                continue
-            seen_notes.add(rels_s[i])
-            seen_text.add(hash(texts_s[i]))
-            out.append({"score": float(sims[i]), "rel_path": rels_s[i],
-                        "section": secs_s[i], "text": texts_s[i]})
-            if len(out) >= top_k:
-                break
     if min_score > 0:
         out = [x for x in out if x["score"] >= min_score]
     return out

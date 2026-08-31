@@ -1,0 +1,79 @@
+{
+  "time": "2026-08-31 17:29",
+  "cases": 10,
+  "hit3": 10,
+  "hit8": 10,
+  "mrr": 0.95,
+  "rows": [
+    {
+      "query": "agent 怎么防遗忘",
+      "expect": "AI-Agent-记忆与知识管理深度研究",
+      "note": "记忆机制研究笔记",
+      "rank": 1,
+      "mark": "✓"
+    },
+    {
+      "query": "Mem0 持久记忆框架",
+      "expect": "Mem-2026-08-05",
+      "note": "Mem0 研究笔记",
+      "rank": 2,
+      "mark": "△"
+    },
+    {
+      "query": "OpenSPH 科学计算框架",
+      "expect": "OpenSPH-2026-08-08",
+      "note": "GitHub 热门研究",
+      "rank": 1,
+      "mark": "✓"
+    },
+    {
+      "query": "C2PA 内容凭证规范",
+      "expect": "C2PA-Specification-2026-08",
+      "note": "合成媒体验证研究",
+      "rank": 1,
+      "mark": "✓"
+    },
+    {
+      "query": "claude-obsidian 项目研究",
+      "expect": "claude-obsidian项目研究-2026-08-11",
+      "note": "项目研究笔记",
+      "rank": 1,
+      "mark": "✓"
+    },
+    {
+      "query": "Cadnano DNA 折纸设计",
+      "expect": "Cadnano2.5-DNA折纸设计",
+      "note": "纳米技术研究",
+      "rank": 1,
+      "mark": "✓"
+    },
+    {
+      "query": "StellarSolver 天文求解器",
+      "expect": "23-StellarSolver-2026-08-08",
+      "note": "GitHub 热门研究",
+      "rank": 1,
+      "mark": "✓"
+    },
+    {
+      "query": "HNSWLIB 轻量向量索引库",
+      "expect": "HNSWLIB-轻量HNSW索引库",
+      "note": "向量库竞品研究",
+      "rank": 1,
+      "mark": "✓"
+    },
+    {
+      "query": "冒泡排序 cpp",
+      "expect": "冒泡排序.cpp",
+      "note": "用户上传的代码文件",
+      "rank": 1,
+      "mark": "✓"
+    },
+    {
+      "query": "vault-rag 全链条生态组成",
+      "expect": "vault-rag全链条生态",
+      "note": "本系统持久记忆",
+      "rank": 1,
+      "mark": "✓"
+    }
+  ]
+}
