@@ -37,6 +37,10 @@ else:
 REPO = Path(__file__).resolve().parent.parent
 
 app = FastAPI(title="vault-rag 控制台", docs_url=None, redoc_url=None)
+# 本地工具：允许任意本地页面（如模型管理 demo）直接调用控制台 API
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory=ASSETS), name="static")
 from vault_rag.webui_ext import router as ext_router  # noqa: E402
 app.include_router(ext_router)
@@ -351,6 +355,24 @@ def api_embed_hf_files(repo: str, mirror: bool = True):
         return {"ok": True, "files": embed_providers.hf_list_files(repo, mirror)}
     except Exception as e:
         raise HTTPException(502, f"拉取文件列表失败: {e}")
+
+
+@app.get("/api/embed/hf/search")
+def api_embed_hf_search(kw: str, mirror: bool = True):
+    """LM Studio 式模型搜索：服务端请求 HF/mirror 检索 API（浏览器无 CORS 问题）。"""
+    import requests as _rq
+    base = "https://hf-mirror.com" if mirror else "https://huggingface.co"
+    try:
+        r = _rq.get(f"{base}/api/models",
+                    params={"search": kw, "filter": "gguf", "limit": 24,
+                            "sort": "downloads", "direction": -1},
+                    timeout=20)
+        r.raise_for_status()
+        repos = [{"id": m.get("id", ""), "downloads": m.get("downloads", 0),
+                  "likes": m.get("likes", 0)} for m in r.json()]
+        return {"ok": True, "repos": repos}
+    except Exception as e:
+        raise HTTPException(502, f"搜索失败: {e}")
 
 
 class HfDownloadReq(BaseModel):
