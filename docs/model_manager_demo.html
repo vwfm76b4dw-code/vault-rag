@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vault-rag · 模型管理 Demo</title>
+<!--
+  ═══════════════════════════════════════════════════════════════
+  模型管理界面 Demo（单文件 · 双击即用 · 数据存 localStorage）
+
+  设计目标：
+    · 生成供应商管理 = cc-switch 形态（预设库/搜索/增删改/一键切换/测活）
+    · 模型下载      = LM Studio 形态（浏览仓库→文件列表→队列进度→已下载）
+    · 检索 Embedding = 来源链模式 + 端点档案 + 内置引擎状态
+
+  参数接入：真实环境把底部 ADAPTER 区的 DEMO 置 false，并实现
+  window.VaultRagAPI = { get/post/del } 指向后端 /api/* 端点即可，
+  界面层只消费参数（profiles/ggufs/presets/downloads），不掺逻辑。
+  ═══════════════════════════════════════════════════════════════
+-->
+<style>
+:root {
+  --bg: #0c0d0c; --surface: #161816; --surface2: #1e211f;
+  --line: rgba(255,255,255,.07); --line2: rgba(255,255,255,.13);
+  --fg: #ececf1; --muted: #8f9a94;
+  --green: #33ff33; --green-dim: rgba(51,255,51,.11); --green-line: rgba(51,255,51,.45);
+  --warn: #d9a04a; --err: #e06c5f;
+  --radius: 12px; --mono: "Cascadia Code","JetBrains Mono",Consolas,monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg);
+  font: 14px/1.6 "Segoe UI Variable","Segoe UI","Microsoft YaHei",sans-serif; }
+::-webkit-scrollbar { width: 9px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(51,255,51,.5); }
+
+.app { display: flex; height: 100vh; }
+/* ---------- 侧栏 ---------- */
+.sidebar { width: 200px; flex-shrink: 0; background: #0a0b0a;
+  border-right: 1px solid var(--line); padding: 14px 10px; display: flex; flex-direction: column; }
+.brand { display: flex; align-items: center; gap: 9px; padding: 2px 8px 14px;
+  font-weight: 650; font-size: 14.5px; }
+.brand .dot-logo { width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
+  background: linear-gradient(135deg, #33ff33, #99ff99);
+  box-shadow: 0 0 10px rgba(51,255,51,.4); }
+.side-nav { flex: 1; }
+.nav-item { display: block; width: 100%; text-align: left; background: none;
+  border: 1px solid transparent; border-radius: 8px; color: var(--muted);
+  font-size: 13.5px; padding: 8px 11px; margin: 2px 0; cursor: pointer; position: relative;
+  transition: all .14s; }
+.nav-item:hover { color: var(--fg); background: rgba(255,255,255,.045); }
+.nav-item.active { color: var(--green); background: var(--green-dim); border-color: var(--green-line); }
+.nav-item .cnt { float: right; font: 10.5px var(--mono); color: var(--muted); }
+.side-foot { border-top: 1px solid var(--line); padding: 10px 8px 2px;
+  font: 10.5px var(--mono); color: var(--muted); }
+.demo-badge { display: inline-block; background: var(--green-dim); color: var(--green);
+  border: 1px solid var(--green-line); border-radius: 6px; padding: 1px 7px;
+  font-size: 10.5px; margin-top: 6px; }
+
+/* ---------- 内容 ---------- */
+.content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.topbar { display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 22px; border-bottom: 1px solid var(--line); background: rgba(10,11,10,.8); }
+.topbar h2 { font-size: 15px; }
+main { flex: 1; overflow-y: auto; padding: 18px 22px; }
+.panel { display: none; }
+.panel.active { display: block; animation: rise .25s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+/* ---------- 组件 ---------- */
+.card { background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 18px; margin-bottom: 14px; }
+.card h3 { font-size: 12.5px; color: var(--muted); letter-spacing: .5px; margin-bottom: 12px; }
+.muted { color: var(--muted); } .small { font-size: 12px; }
+.mono { font-family: var(--mono); }
+.row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+input, select { background: rgba(0,0,0,.32); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 11px; font: inherit; }
+input:focus, select:focus { outline: none; border-color: var(--green-line); }
+button { background: rgba(255,255,255,.05); color: var(--fg); border: 1px solid var(--line2);
+  border-radius: 8px; padding: 7px 14px; cursor: pointer; font: inherit;
+  transition: all .14s; }
+button:hover { border-color: var(--green-line); background: var(--green-dim); }
+button.primary { background: var(--green); border-color: transparent; color: #041804; font-weight: 600; }
+button.primary:hover { background: #5cff5c; }
+button.danger { color: var(--err); border-color: rgba(224,108,95,.4); }
+button.danger:hover { background: rgba(224,108,95,.1); }
+button.mini { padding: 3px 10px; font-size: 11.5px; border-radius: 6px; }
+.chip { font-size: 12px; color: var(--muted); background: rgba(255,255,255,.035);
+  border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px; cursor: pointer; }
+.chip.on { color: #041804; background: var(--green); border-color: transparent; font-weight: 600; }
+.msg { font-size: 12.5px; } .msg.ok { color: var(--green); } .msg.err { color: var(--err); }
+
+/* ---------- 供应商档案（cc-switch 式） ---------- */
+.p-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.plist { display: flex; flex-direction: column; gap: 7px; }
+.prof { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line);
+  border-radius: 9px; background: rgba(255,255,255,.025); padding: 10px 14px; cursor: pointer;
+  transition: all .15s; }
+.prof:hover { border-color: var(--line2); background: rgba(255,255,255,.045); }
+.prof.active { border-color: var(--green-line); background: var(--green-dim); }
+.prof .body { flex: 1; min-width: 0; }
+.prof .name { font-weight: 600; font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.prof .sub { color: var(--muted); font-size: 11px; font-family: var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag { font-size: 10.5px; padding: 1px 8px; border-radius: 5px; flex-shrink: 0;
+  border: 1px solid var(--line); color: var(--muted); }
+.tag.use { color: var(--green); border-color: var(--green-line); background: var(--green-dim); }
+.tag.local { color: #7dd3fc; border-color: rgba(125,211,252,.3); }
+.tag.free { color: var(--warn); border-color: rgba(217,160,74,.35); }
+.tag.key { color: var(--green); border: none; padding: 1px 4px; }
+.prof .ops { display: none; gap: 4px; }
+.prof:hover .ops { display: flex; }
+.grid-2 { display: grid; grid-template-columns: 1.2fr 1fr; gap: 14px; align-items: start; }
+@media (max-width: 1000px) { .grid-2 { grid-template-columns: 1fr; } }
+
+/* ---------- 模型下载（LM Studio 式） ---------- */
+.dl-row { display: flex; align-items: center; gap: 14px; border: 1px solid var(--line);
+  border-radius: 9px; background: rgba(255,255,255,.025); padding: 10px 14px; margin-bottom: 8px; }
+.dl-row .body { flex: 1; min-width: 0; }
+.dl-row .name { font-weight: 600; font-size: 13px; }
+.dl-row .sub { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+.qbadge { font-size: 10.5px; font-family: var(--mono); color: var(--green);
+  border: 1px solid var(--green-line); border-radius: 5px; padding: 1px 7px; }
+.dl-bar { height: 5px; background: rgba(255,255,255,.07); border-radius: 3px; overflow: hidden;
+  margin-top: 6px; }
+.dl-bar > div { height: 100%; width: 0; background: var(--green); transition: width .3s linear; }
+.dl-info { font: 11px var(--mono); color: var(--muted); margin-top: 4px; }
+.pulse-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green); animation: blink 1s steps(2) infinite; margin-right: 6px; }
+@keyframes blink { 50% { opacity: .25; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot-logo"></span> vault-rag</div>
+    <div class="side-nav">
+      <button class="nav-item active" data-nav="prov">✧ 生成供应商 <span class="cnt" id="cnt-prov"></span></button>
+      <button class="nav-item" data-nav="emb">◈ 检索 Embedding</button>
+      <button class="nav-item" data-nav="dl">⤓ 模型下载 <span class="cnt" id="cnt-dl"></span></button>
+    </div>
+    <div class="side-foot">
+      界面 Demo<span class="demo-badge">DEMO · 参数接口已预留</span>
+    </div>
+  </aside>
+
+  <div class="content">
+    <div class="topbar"><h2 id="page-title">生成供应商</h2>
+      <span class="mono muted small" id="head-info"></span></div>
+    <main>
+
+      <!-- ============ 生成供应商（cc-switch 式） ============ -->
+      <div class="panel active" id="panel-prov">
+        <div class="grid-2">
+          <div class="card">
+            <div class="p-head">
+              <h3 style="margin:0">供应商档案 <span class="muted small" id="prov-total"></span></h3>
+              <div class="row" style="margin:0">
+                <input id="prov-q" placeholder="搜索名称/模型…" style="width:180px">
+                <select id="prov-tag" style="width:110px">
+                  <option value="">全部</option><option>国内</option><option>国际</option>
+                  <option>本地</option><option>聚合</option><option>自定义</option>
+                </select>
+              </div>
+            </div>
+            <div class="plist" id="prov-list"></div>
+          </div>
+          <div class="card">
+            <h3 id="np-title">＋ 新增 / 修改档案</h3>
+            <div class="row"><input id="np-name" placeholder="名称（同名即覆盖）"></div>
+            <div class="row"><input id="np-url" placeholder="端点 URL（…/v1/chat/completions）"></div>
+            <div class="row"><input id="np-model" placeholder="模型名"></div>
+            <div class="row"><input id="np-key" type="password" placeholder="专用 key（可选；本地推理留空）">
+              <button class="mini" id="np-eye">显示</button></div>
+            <div class="row"><input id="np-tag" placeholder="标签（国内/国际/本地/聚合/自定义）"></div>
+            <div class="row">
+              <button class="primary" id="np-save">保存档案并启用</button>
+              <button id="np-reset">清空表单</button>
+            </div>
+            <div class="msg" id="np-msg"></div>
+            <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+            <div class="row">
+              <button id="prov-test">测试当前连通</button>
+              <span class="msg" id="prov-test-msg"></span>
+            </div>
+            <p class="muted small">提示：点击左侧档案行 = 一键切换；悬停行尾出现 ✎ 编辑 / 🗑 删除
+              （预设不可删，可覆盖为同名自定义）。key 只存本机 <code>data/_local_settings.json</code>。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 检索 Embedding ============ -->
+      <div class="panel" id="panel-emb">
+        <div class="card">
+          <h3>向量来源链</h3>
+          <p class="muted small">自动：HTTP 端点 → 内置 llama.cpp → 关键词（逐级降级，不阻塞检索）。</p>
+          <div class="row" id="emb-mode">
+            <label class="chip on" data-m="auto">● 自动（推荐）</label>
+            <label class="chip" data-m="http">仅 HTTP 端点</label>
+            <label class="chip" data-m="llamacpp">仅内置 llama.cpp</label>
+            <label class="chip" data-m="off">纯关键词</label>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <h3>HTTP 端点档案</h3>
+            <div class="plist" id="emb-list"></div>
+            <h3 class="mt">＋ 新增 / 修改端点</h3>
+            <div class="row"><input id="ep-name" placeholder="名称（如 LM Studio）"></div>
+            <div class="row"><input id="ep-url" placeholder="URL（…/v1/embeddings）"></div>
+            <div class="row"><input id="ep-model" placeholder="模型名"></div>
+            <div class="row"><input id="ep-key" type="password" placeholder="key（云端用；本地留空）"></div>
+            <div class="row"><button class="primary" id="ep-save">保存端点并启用</button>
+              <span class="muted small">快捷：</span>
+              <button class="mini" data-epq="LM Studio">LM Studio</button>
+              <button class="mini" data-epq="内置 llama-server">llama-server</button>
+              <button class="mini" data-epq="硅基流动">硅基流动</button></div>
+          </div>
+          <div class="card">
+            <h3>内置 llama.cpp <span id="llama-state" class="muted small"></span></h3>
+            <div class="kv" id="llama-info"></div>
+            <h3 class="mt">已下载模型 <span class="muted small">（点击选用）</span></h3>
+            <div class="plist" id="gguf-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 模型下载（LM Studio 式） ============ -->
+      <div class="panel" id="panel-dl">
+        <div class="card">
+          <h3>浏览仓库 <span class="muted small">（HuggingFace GGUF · hf-mirror 可选）</span></h3>
+          <div class="row">
+            <input id="hf-repo" style="flex:1" value="Qwen/Qwen3-Embedding-0.6B-GGUF"
+                   placeholder="仓库 id，如 Qwen/Qwen3-Embedding-0.6B-GGUF">
+            <label class="chip on" id="hf-mirror">hf-mirror 镜像</label>
+            <button class="primary" id="hf-browse">浏览文件</button>
+          </div>
+          <div class="row" id="hf-quick"></div>
+          <div id="hf-files" class="plist muted small">输入仓库后点「浏览文件」</div>
+        </div>
+        <div class="card">
+          <h3>下载队列 <span class="muted small" id="dl-hint"></span></h3>
+          <div id="dl-queue" class="muted small">（无进行中任务）</div>
+        </div>
+        <div class="card">
+          <h3>已下载模型 <span class="muted small" id="dl-done-hint"></span></h3>
+          <div id="dl-done" class="plist"></div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ══════════════ ADAPTER（真实环境替换此区即可） ══════════════ */
+const DEMO = true;
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("vr_" + k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { localStorage.setItem("vr_" + k, JSON.stringify(v)); },
+};
+async function API(path, params) {           // DEMO：全部本地模拟
+  if (!DEMO) return fetch(path, params);      // 真实：post/get 到 /api/*
+  await new Promise(r => setTimeout(r, 120));
+  return { demo: true };
+}
+
+/* ══════════════ 供应商预设库（25 家） ══════════════ */
+const PRESETS = [
+  // —— 国内 ——
+  { name: "Agnes 国内",    tag: "国内", url: "https://api.agnes-ai.cn/v1/chat/completions",                 model: "agnes-2.5-flash" },
+  { name: "DeepSeek",      tag: "国内", url: "https://api.deepseek.com/v1/chat/completions",               model: "deepseek-chat" },
+  { name: "智谱 GLM",      tag: "国内", url: "https://open.bigmodel.cn/api/paas/v4/chat/completions",      model: "glm-4-flash（免费）", free: true },
+  { name: "Kimi 月之暗面", tag: "国内", url: "https://api.moonshot.cn/v1/chat/completions",                model: "moonshot-v1-8k" },
+  { name: "通义千问",      tag: "国内", url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", model: "qwen-plus" },
+  { name: "硅基流动",      tag: "国内", url: "https://api.siliconflow.cn/v1/chat/completions",             model: "deepseek-ai/DeepSeek-V3", free: true },
+  { name: "腾讯混元",      tag: "国内", url: "https://api.hunyuan.cloud.tencent.com/v1/chat/completions",  model: "hunyuan-lite（免费）", free: true },
+  { name: "MiniMax",       tag: "国内", url: "https://api.minimax.chat/v1/text/chatcompletion_v2",         model: "abab6.5s-chat" },
+  { name: "阶跃星辰",      tag: "国内", url: "https://api.stepfun.com/v1/chat/completions",                model: "step-1-8k" },
+  { name: "零一万物",      tag: "国内", url: "https://api.lingyiwanwu.com/v1/chat/completions",            model: "yi-large" },
+  { name: "百度千帆",      tag: "国内", url: "https://qianfan.baidubce.com/v2/chat/completions",           model: "ernie-4.0-8k" },
+  { name: "字节豆包",      tag: "国内", url: "https://ark.cn-beijing.volces.com/api/v3/chat/completions",  model: "doubao-pro-32k" },
+  // —— 国际 ——
+  { name: "OpenAI",        tag: "国际", url: "https://api.openai.com/v1/chat/completions",                 model: "gpt-4o-mini" },
+  { name: "OpenRouter",    tag: "聚合", url: "https://openrouter.ai/api/v1/chat/completions",              model: "openrouter/auto" },
+  { name: "Gemini",        tag: "国际", url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", model: "gemini-2.0-flash", free: true },
+  { name: "Groq",          tag: "国际", url: "https://api.groq.com/openai/v1/chat/completions",            model: "llama-3.3-70b-versatile", free: true },
+  { name: "Mistral",       tag: "国际", url: "https://api.mistral.ai/v1/chat/completions",                 model: "mistral-small-latest" },
+  { name: "xAI Grok",      tag: "国际", url: "https://api.x.ai/v1/chat/completions",                       model: "grok-beta" },
+  { name: "Together",      tag: "聚合", url: "https://api.together.xyz/v1/chat/completions",               model: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
+  { name: "Fireworks",     tag: "聚合", url: "https://api.fireworks.ai/inference/v1/chat/completions",     model: "accounts/fireworks/models/llama-v3p3-70b-instruct" },
+  { name: "Cerebras",      tag: "国际", url: "https://api.cerebras.ai/v1/chat/completions",                model: "llama3.1-8b", free: true },
+  { name: "Perplexity",    tag: "国际", url: "https://api.perplexity.ai/chat/completions",                 model: "sonar" },
+  // —— 本地 ——
+  { name: "LM Studio",     tag: "本地", url: "http://127.0.0.1:1234/v1/chat/completions",   model: "（已加载模型）", local: true },
+  { name: "Ollama",        tag: "本地", url: "http://127.0.0.1:11434/v1/chat/completions",  model: "llama3.1", local: true },
+  { name: "llama.cpp",     tag: "本地", url: "http://127.0.0.1:8080/v1/chat/completions",   model: "qwen3", local: true },
+  { name: "vLLM",          tag: "本地", url: "http://127.0.0.1:8000/v1/chat/completions",   model: "（部署的模型）", local: true },
+];
+
+const EMB_PRESETS = [
+  { name: "LM Studio",          url: "http://127.0.0.1:1234/v1/embeddings",  model: "text-embedding-qwen3-embedding-0.6b", local: true },
+  { name: "内置 llama-server",  url: "http://127.0.0.1:18900/v1/embeddings", model: "qwen3", local: true },
+  { name: "硅基流动 Qwen3",     url: "https://api.siliconflow.cn/v1/embeddings", model: "Qwen/Qwen3-Embedding-0.6B", free: false },
+];
+
+const HF_CATALOG = {
+  "Qwen/Qwen3-Embedding-0.6B-GGUF": [
+    { file: "Qwen3-Embedding-0.6B-Q8_0.gguf",   mb: 650, q: "Q8_0" },
+    { file: "Qwen3-Embedding-0.6B-Q6_K.gguf",   mb: 550, q: "Q6_K" },
+    { file: "Qwen3-Embedding-0.6B-Q5_K_M.gguf", mb: 480, q: "Q5_K_M" },
+    { file: "Qwen3-Embedding-0.6B-Q4_K_M.gguf", mb: 380, q: "Q4_K_M" },
+  ],
+  "Qwen/Qwen3-Embedding-4B-GGUF": [
+    { file: "Qwen3-Embedding-4B-Q8_0.gguf", mb: 4300, q: "Q8_0" },
+    { file: "Qwen3-Embedding-4B-Q4_K_M.gguf", mb: 2500, q: "Q4_K_M" },
+  ],
+  "Qwen/Qwen3-Embedding-8B-GGUF": [
+    { file: "Qwen3-Embedding-8B-Q8_0.gguf", mb: 8300, q: "Q8_0" },
+    { file: "Qwen3-Embedding-8B-Q4_K_M.gguf", mb: 4900, q: "Q4_K_M" },
+  ],
+  "nomic-ai/nomic-embed-text-v1.5-GGUF": [
+    { file: "nomic-embed-text-v1.5.Q8_0.gguf", mb: 84, q: "Q8_0" },
+    { file: "nomic-embed-text-v1.5.Q4_K_M.gguf", mb: 60, q: "Q4_K_M" },
+  ],
+};
+
+/* ══════════════ 状态 ══════════════ */
+let profiles = store.get("profiles", PRESETS.map(p => ({ ...p })));
+let active   = store.get("active", "Agnes 国内");
+let embMode  = store.get("embMode", "auto");
+let embProfiles = store.get("embProfiles", EMB_PRESETS.map(p => ({ ...p })));
+let embActive = store.get("embActive", "LM Studio");
+let ggufs    = store.get("ggufs", [{ file: "Qwen3-Embedding-0.6B-Q8_0.gguf", mb: 650 }]);
+let ggufUse  = store.get("ggufUse", "Qwen3-Embedding-0.6B-Q8_0.gguf");
+let downloads = store.get("downloads", {});      // {file: {mb_total, mb_done, speed}}
+let hfFiles = [], hfRepo = store.get("hfRepo", "Qwen/Qwen3-Embedding-0.6B-GGUF");
+
+function save() {
+  store.set("profiles", profiles); store.set("active", active);
+  store.set("embMode", embMode); store.set("embProfiles", embProfiles);
+  store.set("embActive", embActive); store.set("ggufs", ggufs);
+  store.set("ggufUse", ggufUse); store.set("downloads", downloads);
+  store.set("hfRepo", hfRepo);
+}
+const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const $ = id => document.getElementById(id);
+
+/* ══════════════ 导航 ══════════════ */
+const TITLES = { prov: "生成供应商", emb: "检索 Embedding", dl: "模型下载" };
+document.querySelectorAll(".nav-item").forEach(b =>
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    $("panel-" + b.dataset.nav).classList.add("active");
+    $("page-title").textContent = TITLES[b.dataset.nav];
+    if (b.dataset.nav === "prov") renderProv();
+    if (b.dataset.nav === "emb") renderEmb();
+    if (b.dataset.nav === "dl") { $("hf-repo").value = hfRepo; renderDlPage(); }
+  }));
+
+/* ══════════════ 生成供应商 ══════════════ */
+function renderProv() {
+  const q = ($("prov-q").value || "").toLowerCase();
+  const tag = $("prov-tag").value;
+  const list = profiles.filter(p =>
+    (!tag || (p.tag || "自定义") === tag || (tag === "自定义" && p.custom)) &&
+    (!q || p.name.toLowerCase().includes(q) || p.model.toLowerCase().includes(q) || p.url.toLowerCase().includes(q)));
+  $("prov-total").textContent = `共 ${profiles.length} 家 · 显示 ${list.length}`;
+  $("cnt-prov").textContent = profiles.length;
+  const box = $("prov-list");
+  box.innerHTML = "";
+  list.forEach(p => {
+    const act = p.name === active;
+    const row = document.createElement("div");
+    row.className = "prof" + (act ? " active" : "");
+    row.innerHTML =
+      `<div class="body"><div class="name">${esc(p.name)}` +
+      (p.free ? ` <span class="tag free">免费档</span>` : ``) +
+      (p.local ? ` <span class="tag local">本地</span>` : ``) +
+      (p.key ? `<span class="tag key" title="档案自带 key">🔑</span>` : ``) +
+      `</div><div class="sub">${esc(p.url)} · ${esc(p.model)}</div></div>` +
+      (p.custom ? `<span class="tag">自定义</span>` : `<span class="tag">${esc(p.tag || "")}</span>`) +
+      (act ? `<span class="tag use">● 使用中</span>` : ``) +
+      `<div class="ops"><button class="mini" data-edit="${esc(p.name)}">✎</button>` +
+      (p.custom || p.key ? `<button class="mini danger" data-del="${esc(p.name)}">🗑</button>` : ``) + `</div>`;
+    row.addEventListener("click", async (e) => {
+      const ed = e.target.closest("[data-edit]");
+      const del = e.target.closest("[data-del]");
+      if (ed) { fillForm(p); return; }
+      if (del) {
+        if (!confirm(`删除档案「${p.name}」？`)) return;
+        profiles = profiles.filter(x => x.name !== p.name);
+        if (active === p.name) active = profiles[0].name;
+        save(); renderProv(); return;
+      }
+      active = p.name; save(); renderProv();
+    });
+    box.appendChild(row);
+  });
+}
+function fillForm(p) {
+  $("np-title").textContent = "✎ 编辑档案 · " + p.name;
+  $("np-name").value = p.name; $("np-url").value = p.url;
+  $("np-model").value = p.model; $("np-key").value = p.key || "";
+  $("np-tag").value = p.tag || ""; $("np-name").focus();
+}
+$("prov-q").addEventListener("input", renderProv);
+$("prov-tag").addEventListener("change", renderProv);
+$("np-eye").addEventListener("click", () => {
+  const k = $("np-key"); k.type = k.type === "password" ? "text" : "password";
+});
+$("np-reset").addEventListener("click", () => {
+  ["np-name", "np-url", "np-model", "np-key", "np-tag"].forEach(id => $(id).value = "");
+  $("np-title").textContent = "＋ 新增 / 修改档案";
+});
+$("np-save").addEventListener("click", () => {
+  const name = $("np-name").value.trim(), url = $("np-url").value.trim();
+  const model = $("np-model").value.trim(), key = $("np-key").value.trim();
+  const tag = $("np-tag").value.trim() || "自定义";
+  if (!name || !url) { $("np-msg").className = "msg err"; $("np-msg").textContent = "名称与 URL 必填"; return; }
+  const i = profiles.findIndex(p => p.name === name);
+  const prof = { name, url, model, tag: i >= 0 ? (profiles[i].tag || tag) : tag,
+                 custom: true, ...(key ? { key } : {}) };
+  if (i >= 0) profiles[i] = prof; else profiles.push(prof);
+  active = name; save(); renderProv();
+  $("np-msg").className = "msg ok"; $("np-msg").textContent = `✓ 已保存并启用「${name}」`;
+  setTimeout(() => $("np-msg").textContent = "", 3000);
+});
+$("prov-test").addEventListener("click", () => {
+  const el = $("prov-test-msg");
+  el.className = "msg muted"; let ms = 0;
+  const t = setInterval(() => { ms += 80; el.textContent = `测试中 ${ms}ms…`; }, 80);
+  setTimeout(() => {
+    clearInterval(t);
+    const ok = Math.random() > 0.25 || active.includes("国内");
+    el.className = "msg " + (ok ? "ok" : "err");
+    el.textContent = ok ? `✓ 连通（${300 + Math.floor(Math.random() * 500)}ms）` : "✗ 连接失败（检查 key/网络）";
+  }, 900);
+});
+
+/* ══════════════ 检索 Embedding ══════════════ */
+function renderEmb() {
+  document.querySelectorAll("#emb-mode .chip").forEach(c =>
+    c.classList.toggle("on", c.dataset.m === embMode));
+  const list = $("emb-list");
+  list.innerHTML = "";
+  embProfiles.forEach(p => {
+    const act = p.name === embActive;
+    const row = document.createElement("div");
+    row.className = "prof" + (act ? " active" : "");
+    row.innerHTML =
+      `<div class="body"><div class="name">${esc(p.name)}${p.key ? `<span class="tag key">🔑</span>` : ``}</div>` +
+      `<div class="sub">${esc(p.url)} · ${esc(p.model)}</div></div>` +
+      (p.local ? `<span class="tag local">本地</span>` : ``) +
+      (act ? `<span class="tag use">● 使用中</span>` : ``) +
+      `<div class="ops"><button class="mini" data-edit="${esc(p.name)}">✎</button>` +
+      `<button class="mini" data-del="${esc(p.name)}">🗑</button></div>`;
+    row.addEventListener("click", (e) => {
+      const ed = e.target.closest("[data-edit]");
+      const del = e.target.closest("[data-del]");
+      if (ed) { $("ep-name").value = p.name; $("ep-url").value = p.url;
+                $("ep-model").value = p.model; $("ep-key").value = p.key || ""; return; }
+      if (del) { if (!confirm(`删除端点「${p.name}」？`)) return;
+        embProfiles = embProfiles.filter(x => x.name !== p.name);
+        if (embActive === p.name) embActive = embProfiles[0].name;
+        save(); renderEmb(); return; }
+      embActive = p.name; save(); renderEmb();
+    });
+    list.appendChild(row);
+  });
+  $("llama-state").innerHTML = `<span style="color:var(--green)">✓ 就绪</span>`;
+  $("llama-info").innerHTML =
+    `<div class="row"><span class="muted" style="min-width:64px">服务端</span>` +
+    `<span class="mono small">llama-server.exe（内置，按需拉起）</span></div>` +
+    `<div class="row"><span class="muted" style="min-width:64px">当前模型</span>` +
+    `<span class="mono small">${esc(ggufUse)}</span></div>`;
+  renderGgufs();
+}
+document.querySelectorAll("#emb-mode .chip").forEach(c => c.addEventListener("click", () => {
+  embMode = c.dataset.m; save(); renderEmb();
+}));
+document.querySelectorAll("[data-epq]").forEach(b => b.addEventListener("click", () => {
+  const p = embProfiles.find(x => x.name === b.dataset.epq);
+  if (p) { $("ep-name").value = p.name; $("ep-url").value = p.url;
+           $("ep-model").value = p.model; $("ep-key").value = p.key || ""; }
+}));
+$("ep-save").addEventListener("click", () => {
+  const name = $("ep-name").value.trim(), url = $("ep-url").value.trim();
+  if (!name || !url) { alert("名称与 URL 必填"); return; }
+  const key = $("ep-key").value.trim();
+  const i = embProfiles.findIndex(x => x.name === name);
+  const prof = { name, url, model: $("ep-model").value.trim(),
+                 local: url.includes("127.0.0.1") || url.includes("localhost"), ...(key ? { key } : {}) };
+  if (i >= 0) embProfiles[i] = prof; else embProfiles.push(prof);
+  embActive = name; save(); renderEmb();
+});
+function renderGgufs() {
+  const box = $("gguf-list");
+  box.innerHTML = "";
+  ggufs.forEach(g => {
+    const act = g.file === ggufUse;
+    const row = document.createElement("div");
+    row.className = "prof" + (act ? " active" : "");
+    row.innerHTML =
+      `<div class="body"><div class="name">${esc(g.file)}</div></div>` +
+      `<span class="p-tag">${g.mb} MB</span>` +
+      (act ? `<span class="tag use">● 使用中</span>` : ``) +
+      `<div class="ops"><button class="mini danger" data-del="${esc(g.file)}">🗑</button></div>`;
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("[data-del]")) {
+        if (!confirm(`删除 ${g.file}？`)) return;
+        ggufs = ggufs.filter(x => x.file !== g.file);
+        if (ggufUse === g.file && ggufs.length) ggufUse = ggufs[0].file;
+        save(); renderEmb(); return;
+      }
+      ggufUse = g.file; save(); renderEmb();
+    });
+    box.appendChild(row);
+  });
+}
+
+/* ══════════════ 模型下载（LM Studio 式） ══════════════ */
+$("hf-mirror").addEventListener("click", () => $("hf-mirror").classList.toggle("on"));
+$("hf-browse").addEventListener("click", () => {
+  hfRepo = $("hf-repo").value.trim(); save();
+  const box = $("hf-files");
+  const files = HF_CATALOG[hfRepo];
+  if (!files) { box.innerHTML = `<span class="empty">未收录该仓库（demo 目录有限）——真实环境走 HF API 拉文件列表</span>`; return; }
+  box.innerHTML = "";
+  files.forEach(f => {
+    const dling = downloads[f.file] && !downloads[f.file].done;
+    const doneFile = ggufs.find(g => g.file === f.file);
+    const row = document.createElement("div");
+    row.className = "dl-row";
+    row.innerHTML =
+      `<div class="body"><div class="name">${esc(f.file)}</div>` +
+      `<div class="sub">${esc(hfRepo)}</div>` +
+      `<div class="dl-bar" style="display:${dling ? "block" : "none"}"><div style="width:${dling ? downloads[f.file].pct : 0}%"></div></div>` +
+      (dling ? `<div class="dl-info">${downloads[f.file].pct}% · ${downloads[f.file].speed} MB/s</div>` : ``) +
+      `</div><span class="qbadge">${f.q}</span><span class="muted small">${f.mb} MB</span>` +
+      (doneFile ? `<span class="tag use">✓ 已下载</span>`
+                : `<button class="primary mini" data-dl="${esc(f.file)}" ${dling ? "disabled" : ""}>${dling ? "下载中" : "下载"}</button>`);
+    const btn = row.querySelector("[data-dl]");
+    if (btn) btn.addEventListener("click", () => startDownload(f));
+    box.appendChild(row);
+  });
+  if (Object.keys(downloads).some(k => downloads[k].done === false)) tickDownloads();
+});
+function startDownload(f) {
+  downloads[f.file] = { mb_total: f.mb, mb_done: 0, pct: 0, speed: (2 + Math.random() * 6).toFixed(1), done: false };
+  save(); $("hf-browse").click();       // 重渲染当前列表进入进度态
+}
+function tickDownloads() {
+  let any = false;
+  for (const [file, d] of Object.entries(downloads)) {
+    if (d.done) continue;
+    any = true;
+    d.mb_done = Math.min(d.mb_total, d.mb_done + Number(d.speed) * 0.6);
+    d.pct = Math.round(d.mb_done / d.mb_total * 100);
+    if (d.mb_done >= d.mb_total) {
+      d.done = true;
+      if (!ggufs.find(g => g.file === file)) ggufs.push({ file, mb: d.mb_total });
+      save();
+    }
+  }
+  save();
+  if (any && $("panel-dl").classList.contains("active")) $("hf-browse").click();
+  const q = $("dl-queue");
+  const act = Object.entries(downloads).find(([f, d]) => !d.done);
+  q.innerHTML = act
+    ? `<div class="dl-row"><span class="pulse-dot"></span><div class="body"><div class="name">${esc(act[0])}</div>` +
+      `<div class="dl-bar"><div style="width:${act[1].pct}%"></div></div></div>` +
+      `<span class="dl-info">${act[1].pct}% · ${act[1].speed} MB/s</span></div>`
+    : `（无进行中任务）`;
+  if (any) setTimeout(tickDownloads, 600);
+}
+if (Object.keys(downloads).some(k => !downloads[k].done)) tickDownloads();
+
+/* ══════════════ 启动 ══════════════ */
+$("prov-q") && renderProv();
+renderEmb();
+$("head-info").textContent = `演示数据存 localStorage · 接入真实后端仅需替换 ADAPTER`;
+</script>
+</body>
+</html>
