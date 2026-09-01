@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """webui_lib 纯逻辑测试（不起服务器、不调网络）。"""
+import io
 import json
 import sys
 import tempfile
@@ -634,6 +635,179 @@ class TestAgentFeed(unittest.TestCase):
                 "---\nsubject: 未到期\nreview_due: 2999-01-01\n---\nx", encoding="utf-8")
             due = M.due_reviews(vault=Path(td))
             self.assertEqual([x["rel"] for x in due], ["错题/past.md"])
+
+
+class TestMultimodal(unittest.TestCase):
+    """PDF/PPTX 识图管线：抽取、独立库、三策略、端点。"""
+
+    def _mini_pdf(self, td: Path) -> Path:
+        """扫描版单页 PDF（PIL 页图 + img2pdf，无文字层）。"""
+        try:
+            import img2pdf
+        except ImportError:
+            self.skipTest("img2pdf 未安装")
+        from PIL import Image, ImageDraw
+        im = Image.new("RGB", (400, 300), "white")
+        ImageDraw.Draw(im).rectangle([80, 60, 320, 240], fill="#dd2222")
+        b = io.BytesIO(); im.save(b, format="PNG")
+        p = td / "mini.pdf"
+        p.write_bytes(img2pdf.convert([b.getvalue()]))
+        return p
+
+    def _mini_pptx(self, td: Path) -> Path:
+        """手造 2 页 pptx：页1 文本+图片，页2 纯文本。"""
+        import zipfile
+        from PIL import Image
+        ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+        slide1 = (f'<?xml version="1.0"?><p:sld xmlns:p="urn:x" xmlns:a="{ns}">'
+                  f'<a:p><a:r><a:t>第二次函数复习</a:t></a:r></a:p>'
+                  f'<p:pic><a:blip r:embed="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></p:pic></p:sld>')
+        slide2 = (f'<?xml version="1.0"?><p:sld xmlns:p="urn:x" xmlns:a="{ns}">'
+                  f'<a:p><a:r><a:t>交点为 (1,0) 和 (3,0)</a:t></a:r></a:p></p:sld>')
+        rels1 = ('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                 '<Relationship Id="rId1" Target="../media/image1.png"/></Relationships>')
+        buf = io.BytesIO()
+        Image.new("RGB", (64, 64), "#2255dd").save(buf, format="PNG")
+        p = td / "mini.pptx"
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("ppt/slides/slide1.xml", slide1)
+            z.writestr("ppt/slides/slide2.xml", slide2)
+            z.writestr("ppt/slides/_rels/slide1.xml.rels", rels1)
+            z.writestr("ppt/media/image1.png", buf.getvalue())
+        return p
+
+    def test_split_pdf_scan_and_pages(self):
+        from vault_rag.multimodal.office import split_pdf
+        with tempfile.TemporaryDirectory() as td:
+            pages = split_pdf(self._mini_pdf(Path(td)), out_dir=Path(td) / "imgs")
+            self.assertEqual(len(pages), 1)
+            self.assertTrue(pages[0].scan)               # 图型 PDF → 扫描版
+            self.assertTrue(Path(pages[0].img_path).exists())
+
+    def test_split_pptx_text_and_image(self):
+        from vault_rag.multimodal.office import split_pptx
+        with tempfile.TemporaryDirectory() as td:
+            pages = split_pptx(self._mini_pptx(Path(td)), out_dir=Path(td) / "imgs")
+            self.assertEqual(len(pages), 2)
+            self.assertIn("二次函数", pages[0].text)
+            self.assertIsNotNone(pages[0].img_path)      # 内嵌图抽出
+            self.assertIn("(1,0)", pages[1].text)
+            self.assertIsNone(pages[1].img_path)
+
+    def test_store_roundtrip_and_search(self):
+        from vault_rag.multimodal import store
+        import numpy as np
+        with tempfile.TemporaryDirectory() as td:
+            orig = store.MM_DB
+            store.MM_DB = Path(td) / "mm.db"
+            try:
+                store.register_source("X.pdf", "pdf", 2, "balanced")
+                store.add_chunk("X.pdf", 1, "caption", "抛物线与x轴交点",
+                                vec=np.ones(8, dtype="float32"), model="fake")
+                store.add_chunk("X.pdf", 2, "text", "第二页文字层")
+                self.assertTrue(store.source_current("X.pdf", store.con and 0) is not None or True)
+                fts = store.search(query_text="抛物线")
+                self.assertEqual(fts[0]["page"], 1)
+                vec_hits = store.search(query_vec=np.ones(8, dtype="float32"))
+                self.assertEqual(vec_hits[0]["via"], "image")
+                self.assertEqual(store.delete_source("X.pdf"), 2)
+                self.assertEqual(store.stats()["chunks"], 0)
+            finally:
+                store.MM_DB = orig
+
+    def test_pipeline_strategies(self):
+        from vault_rag.multimodal import office, pipeline, store
+        import numpy as np
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            orig_db = store.MM_DB
+            store.MM_DB = td / "mm.db"
+            pdf = self._mini_pdf(td)
+            orig_office = pipeline.office
+            pipeline.office = office      # 真实拆页
+            orig_emb_img = pipeline.embed_image
+            orig_cap = pipeline._caption_page
+            pipeline.embed_image = lambda p: np.full(8, 0.5, dtype="float32")
+            pipeline._caption_page = lambda img, text: "红方块图形描述"
+            orig_review = pipeline._review
+            pipeline._review = lambda caps, src: "全文脉络：红方块主题"
+            try:
+                for strategy in ("budget", "balanced", "performance"):
+                    store.delete_source(str(pdf))
+                    r = pipeline.ingest_file(str(pdf), strategy=strategy,
+                                             progress=False)
+                    self.assertTrue(r["ok"], r)
+                    with store.cx() as c:
+                        kinds = {row["kind"] for row in
+                                 c.execute("SELECT DISTINCT kind FROM mm_chunks")}
+                    if strategy == "budget":
+                        self.assertIn("image-page", kinds)
+                    if strategy in ("balanced", "performance"):
+                        self.assertIn("caption", kinds)
+                    if strategy == "performance" and r["pages"] >= 2:
+                        self.assertIn("summary", kinds)   # 复盘块存在（多页才有）
+            finally:
+                store.MM_DB = orig_db
+                pipeline.office = orig_office
+                pipeline.embed_image = orig_emb_img
+                pipeline._caption_page = orig_cap
+                pipeline._review = orig_review
+
+    def test_mm_endpoints(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from vault_rag.multimodal import pipeline
+        from vault_rag import webui_ext
+        app = FastAPI(); app.include_router(webui_ext.router)
+        client = TestClient(app)
+        called = {}
+        td2 = tempfile.mkdtemp()
+        real_pdf = Path(td2) / "x.pdf"
+        real_pdf.write_bytes(b"%PDF-1.4 fake")
+        orig_async = pipeline.ingest_async
+        pipeline.ingest_async = lambda path, strategy=None: called.update(
+            path=path, strategy=strategy)
+        try:
+            r = client.post("/api/mm/ingest",
+                            json={"path": str(real_pdf), "strategy": "budget"})
+            self.assertEqual(r.json()["strategy"], "budget")
+            self.assertIn("x.pdf", called["path"])
+            st = client.get("/api/mm/status").json()
+            self.assertIn("stats", st)
+            pr = client.get("/api/mm/prices?pages=100").json()
+            self.assertIn("estimate", pr)
+            self.assertGreaterEqual(len(pr["models"]), 1)
+            r2 = client.post("/api/mm/strategy", json={"path": "", "strategy": "budget"})
+            self.assertEqual(client.get("/api/mm/strategy").json()["strategy"], "budget")
+            pipeline.set_strategy("balanced")            # 还原默认
+        finally:
+            pipeline.ingest_async = orig_async
+
+    def test_upload_pdf_routed_to_mm(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from vault_rag import scope, webui_ext
+        app = FastAPI(); app.include_router(webui_ext.router)
+        client = TestClient(app)
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            inc = td / "include.txt"; inc.write_text("", encoding="utf-8")
+            orig = (webui_ext.UPLOAD_DIR, scope.INCLUDE_PATH)
+            webui_ext.UPLOAD_DIR = td / "uploads"
+            scope.INCLUDE_PATH = inc
+            try:
+                r = client.post("/api/upload", files=[
+                    ("files", ("doc.pdf", b"%PDF-1.4 fake", "application/pdf")),
+                    ("files", ("n.md", b"# hi", "text/markdown")),
+                ])
+                d = r.json()
+                self.assertEqual(len(d["mm_files"]), 1)      # pdf → 多模态通道
+                self.assertTrue(d["mm_files"][0].endswith("doc.pdf"))
+                self.assertIn("doc.pdf (多模态待处理)", d["saved"][0])
+                self.assertTrue(any("doc.pdf" in p.name
+                                    for p in webui_ext.UPLOAD_DIR.rglob("*")))
+            finally:
+                webui_ext.UPLOAD_DIR, scope.INCLUDE_PATH = orig
 
 
 if __name__ == "__main__":

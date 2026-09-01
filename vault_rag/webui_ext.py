@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -106,6 +107,7 @@ def repo_rebuild():
 # 图像/二进制检测：扩展名优先，magic bytes 兜底（防止改名 .txt 的图片静默入库）
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg",
               ".ico", ".tif", ".tiff", ".heic", ".avif"}
+DOC_EXTS = {".pdf", ".pptx"}          # 多模态管线一键处理（视觉拆页）
 _IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a",
                 b"\x00\x00\x01\x00")          # PNG/JPEG/GIF/ICO
 _BINARY_MAGIC = (b"%PDF", b"PK\x03\x04", b"\x1f\x8b", b"MZ",
@@ -114,7 +116,7 @@ IMAGE_HINT = "图片暂不支持索引（多模态索引规划中），已跳过
 
 
 def classify_upload(filename: str, head: bytes) -> str:
-    """按扩展名 + magic bytes 判定上传类型：'image' / 'binary' / 'text'。
+    """按扩展名 + magic bytes 判定上传类型：'image' / 'binary' / 'doc' / 'text'。
 
     文本误杀防线：只认强 magic 与 NUL 字节，不用 "BM"/"RIFF" 这类
     与 ASCII 文本重叠的前缀（"BMW 开头的笔记" 不能被当二进制）。
@@ -122,6 +124,8 @@ def classify_upload(filename: str, head: bytes) -> str:
     ext = Path(filename).suffix.lower()
     if ext in IMAGE_EXTS:
         return "image"
+    if ext in DOC_EXTS:
+        return "doc"
     if head.startswith(_IMAGE_MAGIC):
         return "image"
     if head.startswith(_BINARY_MAGIC) or b"\x00" in head:
@@ -138,7 +142,7 @@ async def upload_files(files: list[UploadFile] = File(...)):
     if not files:
         raise HTTPException(400, "未选择文件")
     batch = UPLOAD_DIR / time.strftime("%Y%m%d-%H%M%S")
-    saved, skipped = [], []
+    saved, skipped, mm_files = [], [], []
     for f in files:
         safe = Path(f.filename).name
         if not safe or safe.startswith("."):
@@ -156,6 +160,11 @@ async def upload_files(files: list[UploadFile] = File(...)):
             out.write(head)
             while chunk := await f.read(1 << 20):
                 out.write(chunk)
+        if kind == "doc":
+            # PDF/PPTX → 多模态一键管线（前端拿到 mm_files 后调 /api/mm/ingest）
+            mm_files.append(str(dest))
+            saved.append(f"{safe} (多模态待处理)")
+            continue
         ok, msg = lib.add_external_file(str(dest), alias=f"external/{safe}")
         (saved if ok else skipped).append(f"{safe} ({msg})" if not ok else safe)
     n_skip = len(skipped)
@@ -165,7 +174,8 @@ async def upload_files(files: list[UploadFile] = File(...)):
     else:
         message = "没有文件入库" + (f"（{n_skip} 个均不支持）" if n_skip else "")
     return {"ok": bool(saved), "batch_dir": str(batch) if saved else "",
-            "saved": saved, "skipped": skipped, "message": message}
+            "saved": saved, "skipped": skipped, "message": message,
+            "mm_files": mm_files}
 
 
 # ---------------- 错题本（灵魂功能：拍照 → 结构化 → 可检索可复习） ----------------
@@ -237,6 +247,111 @@ def headline():
     return {"latest": latest, "feed": evts[:6], "new_7d": new_7d,
             "recent_notes": recent_notes, "due_reviews": due,
             "date": _time.strftime("%Y-%m-%d %A")}
+
+
+# ---------------- 多模态一键处理（PDF/PPTX 识图） ----------------
+
+class MmIngestReq(BaseModel):
+    path: str
+    strategy: str | None = None
+
+
+@router.post("/mm/ingest")
+def mm_ingest(req: MmIngestReq):
+    """一键处理 PDF/PPTX：后台线程拆页→按策略入库，进度走 /api/mm/status。"""
+    from vault_rag.multimodal import pipeline
+    p = Path(req.path)
+    if p.suffix.lower() not in (".pdf", ".pptx") or not p.exists():
+        raise HTTPException(422, "仅支持已上传的 pdf/pptx 文件")
+    pipeline.state.update(running=False, ok=None, file="", total=0, done=0,
+                          log="")     # 清残留状态，前端轮询据此识别"未启动"
+    pipeline.ingest_async(str(p), req.strategy)
+    return {"ok": True, "started": p.name,
+            "strategy": req.strategy or pipeline.current_strategy()}
+
+
+@router.get("/mm/status")
+def mm_status():
+    from vault_rag.multimodal import pipeline, store
+    return {**{k: pipeline.state[k] for k in
+               ("running", "file", "page", "total", "done", "ok", "log")},
+            "stats": store.stats(),
+            "strategy": pipeline.current_strategy()}
+
+
+@router.get("/mm/strategy")
+def mm_strategy_get():
+    from vault_rag.multimodal import pipeline
+    return {"strategy": pipeline.current_strategy(),
+            "options": list(pipeline.STRATEGIES)}
+
+
+@router.post("/mm/strategy")
+def mm_strategy_set(req: MmIngestReq):
+    from vault_rag.multimodal import pipeline
+    try:
+        pipeline.set_strategy(req.strategy or "balanced")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"ok": True, "strategy": req.strategy}
+
+
+@router.get("/mm/prices")
+def mm_prices(pages: int = 100):
+    """三策略成本估算（models.dev 实时价，cc-switch 同源）。"""
+    from vault_rag.multimodal import prices
+    est = prices.estimate(pages)
+    return {"estimate": est, "models": prices.vision_models()[:12],
+            "source": "models.dev（cc-switch 价格面板同源，缓存 7 天）"}
+
+
+class MmNoteReq(BaseModel):
+    chunk_id: int
+
+
+@router.post("/mm/to-note")
+def mm_to_note(req: MmNoteReq):
+    """命中转笔记：把某页描述/复盘写成 vault/资料/ 下的 md，可编辑可索引。"""
+    from vault_rag.multimodal import store
+    from vault_rag.config import VAULT
+    ch = store.get_chunk(req.chunk_id)
+    if not ch:
+        raise HTTPException(404, "块不存在")
+    stem = Path(ch["src"]).stem
+    name = f"{stem}-p{ch['page']}.md"
+    target = VAULT / "资料" / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    body = (f"---\nsource: {ch['src']}\npage: {ch['page']}\n"
+            f"created: {time.strftime('%Y-%m-%d')}\n---\n\n"
+            f"# {stem} · 第{ch['page']}页\n\n{ch['text'] or '（无文字）'}\n\n"
+            f"[打开原文件]({ch['src'].replace(chr(92), '/')})\n")
+    target.write_text(body, encoding="utf-8")
+    return {"ok": True, "note": str(target)}
+
+
+@router.post("/mm/calibrate")
+def mm_calibrate():
+    """一次性识图校准：后台跑 4 合成案例，结果写 local_settings（mm_calib）。"""
+    from vault_rag.multimodal import pipeline
+    if pipeline.state.get("calibrating"):
+        raise HTTPException(409, "校准进行中")
+    pipeline.state["calibrating"] = True
+
+    def _run():
+        try:
+            pipeline.calibrate()
+        finally:
+            pipeline.state["calibrating"] = False
+    threading.Thread(target=_run, daemon=True, name="mm-calib").start()
+    return {"ok": True, "started": True}
+
+
+@router.get("/mm/calibrate")
+def mm_calibrate_get():
+    from vault_rag.multimodal import pipeline
+    lib_settings = lib.load_local_settings()
+    return {"calibrating": pipeline.state.get("calibrating", False),
+            "result": lib_settings.get("mm_calib")}
 
 
 # ---------------- 系统自检 ----------------

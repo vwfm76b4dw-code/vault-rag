@@ -444,11 +444,11 @@ function addMsg(role, text) {
   return div.querySelector(".bubble");
 }
 
-function renderSources(results) {
+function renderSources(results, mm) {
   $("sources-count").textContent = results.length ? `(${results.length})` : "";
   const box = $("sources-list");
   box.innerHTML = "";
-  if (!results.length) {
+  if (!results.length && !(mm && mm.length)) {
     box.innerHTML = `<span class="empty">无来源</span>`;
     return;
   }
@@ -466,6 +466,29 @@ function renderSources(results) {
     });
     box.appendChild(d);
   });
+  if (mm && mm.length) {
+    const head = document.createElement("div");
+    head.className = "mh-item muted";
+    head.style.margin = "6px 0 2px";
+    head.textContent = "PDF/PPT 页命中（可转笔记）";
+    box.appendChild(head);
+    mm.forEach((m) => {
+      const d = document.createElement("div");
+      d.className = "source glass";
+      d.innerHTML =
+        `<span class="score">${m.score?.toFixed(3) ?? ""}</span>` +
+        `<b>📄</b> <span class="path">${escapeHtml(m.label)}</span>` +
+        ` <button class="linklike" data-mm-note="${m.chunk_id}">转笔记</button>`;
+      d.querySelector("[data-mm-note]").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+          const r = await post("/api/mm/to-note", { chunk_id: m.chunk_id });
+          alert("已转笔记：" + r.note);
+        } catch (err) { alert(err.message); }
+      });
+      box.appendChild(d);
+    });
+  }
 }
 
 function copyBtnHtml() {
@@ -538,7 +561,7 @@ async function sendChat(searchOnly) {
           let ev;
           try { ev = JSON.parse(line.slice(5)); } catch (_) { continue; }
           if (ev.type === "sources") {
-            renderSources(ev.results);
+            renderSources(ev.results, ev.mm);
           } else if (ev.type === "delta") {
             acc += ev.text;
             bubble.innerHTML = md(acc) + caret + copyBtnHtml();
@@ -682,6 +705,19 @@ async function loadManage() {
       $("backend-url").value = `${location.origin}/v1`;
       $("backend-key").value = bi.key;
     } catch (_) { /* 后端信息失败不阻塞设置页 */ }
+    try {                                   // 识图策略 + 价格估算 + 上次校准
+      const ms = await api("/api/mm/strategy");
+      if ($("mm-strategy")) $("mm-strategy").value = ms.strategy;
+      const pr = await api("/api/mm/prices?pages=100");
+      const e = pr.estimate;
+      $("mm-price").textContent =
+        `100 页估算 — 纯本地: ¥0 · 云描述(${e.cloud_free_model}): $${(e.cloud_free_per_n || 0).toFixed(3)}` +
+        ` · 高性能(${e.cloud_pro_model}): $${(e.cloud_pro_per_n || 0).toFixed(2)}`;
+      const cb = await api("/api/mm/calibrate");
+      if (cb.result && $("mm-msg"))
+        $("mm-msg").textContent =
+          `上次校准: 本地 ${cb.result.local.pass}/${cb.result.local.n} · 云端 ${cb.result.cloud.pass}/${cb.result.cloud.n}（${cb.result.time}）`;
+    } catch (_) { /* 多模态信息失败不阻塞 */ }
     pollIndex();
   } catch (e) { setMsg("scope-msg", e.message, false); }
 }
@@ -693,6 +729,31 @@ $("btn-backend-copy").addEventListener("click", async () => {
     await navigator.clipboard.writeText(JSON.stringify(cfg, null, 2));
     setMsgAuto("backend-msg", "✓ 已复制接入配置 JSON", true);
   } catch (e) { setMsg("backend-msg", e.message, false); }
+});
+
+$("mm-strategy").addEventListener("change", async (e) => {
+  try {
+    await post("/api/mm/strategy", { strategy: e.target.value });
+    setMsgAuto("mm-msg", "✓ 策略已保存（下次识图生效）", true);
+  } catch (err) { setMsg("mm-msg", err.message, false); }
+});
+
+$("btn-mm-calib").addEventListener("click", async () => {
+  try {
+    await post("/api/mm/calibrate");
+    setMsgAuto("mm-msg", "校准中：本地模型加载 + 4 合成案例（约 1-2 分钟）…", true, 300000);
+    const poll = setInterval(async () => {
+      try {
+        const r = await api("/api/mm/calibrate");
+        if (!r.calibrating && r.result) {
+          clearInterval(poll);
+          $("mm-msg").className = "msg ok";
+          $("mm-msg").textContent =
+            `✓ 校准完成 — 本地 ${r.result.local.pass}/${r.result.local.n} · 云端 ${r.result.cloud.pass}/${r.result.cloud.n}`;
+        }
+      } catch (_) { clearInterval(poll); }
+    }, 3000);
+  } catch (err) { setMsg("mm-msg", err.message, false); }
 });
 
 $("btn-scope-save").addEventListener("click", async () => {
@@ -1005,6 +1066,7 @@ async function sendUpload(fileList) {
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || r.statusText);
       out.saved = d.saved; out.skipped = d.skipped; out.batch = d.batch_dir;
+      out.mmFiles = d.mm_files || [];
     }
     const parts = [];
     if (out.mistakes.length)
@@ -1024,9 +1086,37 @@ async function sendUpload(fileList) {
       await post("/api/index/refresh");
       nav("ops"); pollIndex();
     };
+    // PDF/PPTX → 多模态一键管线（后台线程 + 轮询进度）
+    if ((out.mmFiles || []).length) {
+      for (const p of out.mmFiles) await post("/api/mm/ingest", { path: p });
+      await pollMm();
+    }
   } catch (e) {
     $("upload-result").className = "msg err";
     $("upload-result").textContent = "✗ " + e.message;
+  }
+}
+
+async function pollMm() {
+  let started = false, waited = 0;
+  for (;;) {
+    const s = await api("/api/mm/status").catch(() => null);
+    if (!s) return;
+    if (s.running) started = true;
+    // 线程尚未写入状态时给 12s 宽限，避免抢跑误报"完成 0 页"
+    if (!s.running && (started || s.ok !== null || s.file)) {
+      const name = (s.file || "").split(/[\\/]/).pop();
+      $("upload-result").className = s.ok === false ? "msg err" : "msg ok";
+      $("upload-result").textContent = s.ok === false
+        ? `✗ 识图处理失败：${name} ${s.log || ""}`
+        : `✓ 识图完成：${name} ${s.total} 页入库（策略 ${s.strategy}，可检索）`;
+      return;
+    }
+    waited += 1500;
+    if (waited > 12000) return;
+    $("upload-result").className = "msg muted";
+    $("upload-result").textContent = "⚙ 识图管线启动中…";
+    await new Promise((r) => setTimeout(r, 1500));
   }
 }
 

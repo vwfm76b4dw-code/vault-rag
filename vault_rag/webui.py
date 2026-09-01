@@ -99,10 +99,21 @@ def api_search(req: SearchReq):
         except Exception:                    # 端点离线 → 关键词模式（静默，不算错误）
             hits = lib.keyword_fallback(req.q.strip(), top_k=req.k)
             mode = "keyword"
+    mm = []
+    try:                                     # PDF/PPTX 多模态命中（FTS 常开）
+        from vault_rag.multimodal import pipeline
+        mm = [{"chunk_id": h["id"],
+               "score": h["score"],
+               "label": f"{Path(h['src']).name} · 第{h['page']}页",
+               "kind": h["kind"], "text": h["text"][:300]}
+              for h in pipeline.search(req.q.strip(), top_k=3, with_vec=False)]
+    except Exception:
+        mm = []
     return {"mode": mode, "results": [
         {"score": round(h["score"], 4), "rel_path": h["rel_path"],
          "section": h.get("section") or "", "text": h["text"][:300],
-         "superseded": h.get("superseded", False)} for h in hits]}
+         "superseded": h.get("superseded", False)} for h in hits],
+        "mm": mm}
 
 
 class ChatReq(SearchReq):
@@ -122,10 +133,22 @@ def api_chat(req: ChatReq):
             # 非错误：端点没开就安静用关键词，不吓唬人
             yield _sse({"type": "info",
                         "message": "当前为关键词检索 · 启动 LM Studio(1234) 后自动升级语义检索"})
+        try:                                 # PDF/PPTX 页描述并入上下文（最多 3 条）
+            from vault_rag.multimodal import pipeline
+            mm = pipeline.search(req.q.strip(), top_k=3, with_vec=False)
+            hits = hits + [{"rel_path": f"{Path(h['src']).name} 第{h['page']}页",
+                            "section": "PDF/PPT",
+                            "text": h["text"], "superseded": False,
+                            "score": h["score"]} for h in mm]
+            mm_ui = [{"chunk_id": h["id"], "label":
+                      f"{Path(h['src']).name} · 第{h['page']}页",
+                      "score": h["score"]} for h in mm]
+        except Exception:
+            mm_ui = []
         yield _sse({"type": "sources", "results": [
             {"score": round(h["score"], 4), "rel_path": h["rel_path"],
              "section": h.get("section") or "", "superseded": h.get("superseded", False)}
-            for h in hits]})
+            for h in hits], "mm": mm_ui})
         messages = lib.build_messages(req.q.strip(), hits)
         acc = []
         try:

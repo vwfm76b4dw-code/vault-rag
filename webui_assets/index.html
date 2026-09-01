@@ -140,7 +140,18 @@
             <p>拖拽文件到此处，或</p>
             <input type="file" id="upload-input" multiple style="display:none">
             <button class="primary" onclick="document.getElementById('upload-input').click()">选择文件（可多选）</button>
-            <p class="muted small" id="upload-hint">📸 图片（错题拍照）→ AI 识别批改生成错题笔记；.md/.txt 等文本文件 → 直接入库；其它二进制不支持</p>
+            <p class="muted small" id="upload-hint">📸 图片（错题拍照）→ AI 识别批改生成错题笔记；.pdf/.pptx → 多模态识图按页入库；.md/.txt → 直接入库；其它二进制不支持</p>
+            <div class="row">
+              <span class="lbl-fixed">识图策略</span>
+              <select id="mm-strategy" class="sel" style="max-width:210px">
+                <option value="budget">省钱 · 纯本地（离线 ¥0）</option>
+                <option value="balanced">平衡 · 云描述（Agnes 免费）</option>
+                <option value="performance">高性能 · 云描述 + 关联复盘</option>
+              </select>
+              <button id="btn-mm-calib">识图校准（一次性）</button>
+              <span id="mm-msg" class="msg"></span>
+            </div>
+            <p class="muted small mono" id="mm-price"></p>
           </div>
           <div id="upload-result" class="msg"></div>
           <div class="row" id="upload-actions" style="display:none">
