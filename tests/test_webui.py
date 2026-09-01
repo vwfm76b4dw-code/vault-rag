@@ -362,5 +362,279 @@ class TestRepoAdminEndpoints(unittest.TestCase):
                 config.DB_PATH = orig
 
 
+class TestV1Backend(unittest.TestCase):
+    """OpenAI 兼容问答后端：检索注入、流式协议、鉴权、降级。"""
+
+    HITS = [{"rel_path": "知识/a.md", "section": "原理", "text": "HNSW 索引很香",
+             "score": 0.81, "superseded": False}]
+
+    def _client(self):
+        from fastapi.testclient import TestClient
+        from vault_rag import webui as W
+        from vault_rag import webui_lib as lib
+        self._lib = lib
+        self._orig = {n: lib.__dict__.get(n) for n in
+                      ("retrieve", "keyword_fallback", "stream_chat",
+                       "load_local_settings", "save_local_settings")}
+        lib.load_local_settings = lambda: {"backend_key": "test-key-123"}
+        lib.save_local_settings = lambda patch: None
+        lib.retrieve = lambda q, top_k=6: list(self.HITS)[:top_k]
+        lib.keyword_fallback = lambda q, top_k=6: list(self.HITS)[:top_k]
+        seen = {"messages": None}
+
+        def fake_stream(messages, temperature=None):
+            seen["messages"] = messages
+            yield "答案"
+            yield "A+"
+        lib.stream_chat = fake_stream
+        self._seen = seen
+        return TestClient(W.app), lib, seen
+
+    def tearDown(self):
+        for n, fn in self._orig.items():
+            if fn is None:
+                self._lib.__dict__.pop(n, None)
+            else:
+                setattr(self._lib, n, fn)
+
+    def test_401_without_or_wrong_key(self):
+        client, _lib, _seen = self._client()
+        body = {"messages": [{"role": "user", "content": "HNSW 是什么"}]}
+        self.assertEqual(client.post("/v1/chat/completions", json=body).status_code, 401)
+        r = client.post("/v1/chat/completions", json=body,
+                        headers={"Authorization": "Bearer wrong"})
+        self.assertEqual(r.status_code, 401)
+
+    def test_nonstream_shape_and_rag_injection(self):
+        client, _lib, seen = self._client()
+        r = client.post("/v1/chat/completions",
+                        json={"messages": [{"role": "user", "content": "HNSW 是什么"}]},
+                        headers={"Authorization": "Bearer test-key-123"})
+        self.assertEqual(r.status_code, 200)
+        d = r.json()
+        self.assertTrue(d["id"].startswith("chatcmpl-"))
+        self.assertEqual(d["object"], "chat.completion")
+        self.assertEqual(d["choices"][0]["message"]["content"], "答案A+")
+        self.assertEqual(d["vault_rag_sources"][0]["rel_path"], "知识/a.md")
+        msgs = seen["messages"]
+        self.assertEqual(msgs[0]["role"], "system")
+        self.assertIn("[1] 知识/a.md", msgs[0]["content"])       # 检索注入
+        self.assertEqual(msgs[-1]["content"], "HNSW 是什么")     # 原消息保留
+
+    def test_stream_sse_protocol(self):
+        client, _lib, _seen = self._client()
+        r = client.post("/v1/chat/completions",
+                        json={"stream": True,
+                              "messages": [{"role": "user", "content": "q"}]},
+                        headers={"Authorization": "Bearer test-key-123"})
+        self.assertEqual(r.status_code, 200)
+        lines = [x for x in r.text.splitlines() if x.startswith("data: ")]
+        self.assertEqual(lines[-1], "data: [DONE]")
+        import json as _json
+        chunks = [_json.loads(x[6:]) for x in lines[:-1]]
+        self.assertTrue(all(c["object"] == "chat.completion.chunk" for c in chunks))
+        self.assertEqual("".join(c["choices"][0]["delta"].get("content", "")
+                                 for c in chunks), "答案A+")
+        self.assertEqual(chunks[-1]["choices"][0]["finish_reason"], "stop")
+
+    def test_multimodal_parts_and_empty_guard(self):
+        client, _lib, _seen = self._client()
+        r = client.post("/v1/chat/completions",
+                        json={"messages": [{"role": "user", "content": []}]},
+                        headers={"Authorization": "Bearer test-key-123"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_backend_info_exposes_key(self):
+        client, _lib, _seen = self._client()
+        d = client.get("/api/backend/info").json()
+        self.assertEqual(d["key"], "test-key-123")
+        self.assertEqual(d["path"], "/v1/chat/completions")
+
+
+class TestMistake(unittest.TestCase):
+    """错题本：视觉 JSON 解析 → 结构化笔记 → 端点链路（灵魂功能·复利入口）。"""
+
+    GOOD = {"subject": "数学", "topic_tags": ["二次函数"],
+            "question": "求 $y=x^2-2x+1$ 的最小值",
+            "my_answer": "-1", "correct_answer": "0",
+            "error_reason": "配方符号错误",
+            "knowledge_points": ["二次函数最值", "配方法"],
+            "solution": "$y=(x-1)^2$，最小值 0"}
+
+    def test_parse_fenced_and_raw(self):
+        from vault_rag import mistake as M
+        fenced = "```json\n" + json.dumps(self.GOOD, ensure_ascii=False) + "\n```"
+        self.assertEqual(M.parse_vision_json(fenced)["subject"], "数学")
+        raw = "说明文字 " + json.dumps(self.GOOD, ensure_ascii=False)
+        self.assertEqual(M.parse_vision_json(raw)["my_answer"], "-1")
+        with self.assertRaises(M.MistakeError):
+            M.parse_vision_json("完全不是 JSON")
+
+    def test_build_note_frontmatter_and_sections(self):
+        from vault_rag import mistake as M
+        with tempfile.TemporaryDirectory() as td:
+            path, preview = M.build_note(dict(self.GOOD), "photo.jpg",
+                                         vault=Path(td))
+            self.assertTrue(str(path).replace("\\", "/")
+                            .endswith("错题/" + path.name))
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("type: mistake", text)
+            self.assertIn("tags: [错题, 二次函数]", text)
+            self.assertIn("source: photo.jpg", text)
+            for sec in ("## 题目", "## 我的答案", "## 正确答案",
+                        "## 错因分析", "## 知识点", "## 解法"):
+                self.assertIn(sec, text)
+            self.assertIn("- 二次函数最值", text)
+            self.assertTrue(preview["knowledge_points"])
+            # 复习到期日 = 明天
+            import time as _t
+            due = _t.strftime("%Y-%m-%d", _t.localtime(_t.time() + 86400))
+            self.assertIn(f"review_due: {due}", text)
+
+    def test_build_note_rejects_empty_question(self):
+        from vault_rag import mistake as M
+        with tempfile.TemporaryDirectory() as td:
+            bad = dict(self.GOOD, question="  ")
+            with self.assertRaises(M.MistakeError):
+                M.build_note(bad, "x.jpg", vault=Path(td))
+
+    def test_ingest_with_fake_vision(self):
+        from vault_rag import mistake as M
+        fenced = "```json\n" + json.dumps(self.GOOD, ensure_ascii=False) + "\n```"
+        with tempfile.TemporaryDirectory() as td:
+            path, _ = M.ingest(b"\x89PNG", "a.png",
+                               vision_fn=lambda p, b: fenced, vault=Path(td))
+            self.assertTrue(path.exists())
+            nm = dict(self.GOOD, not_mistake=True, description="一张风景照")
+            with self.assertRaises(M.MistakeError) as cm:
+                M.ingest(b"\x89PNG", "b.png",
+                         vision_fn=lambda p, b: json.dumps(nm, ensure_ascii=False),
+                         vault=Path(td))
+            self.assertIn("风景照", str(cm.exception))
+
+    def test_endpoint_ingest_and_error(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from vault_rag import mistake as M, webui_ext
+        app = FastAPI(); app.include_router(webui_ext.router)
+        client = TestClient(app)
+        with tempfile.TemporaryDirectory() as td:
+            from vault_rag import config
+            orig_ingest, orig_dir = M.ingest, webui_ext.UPLOAD_DIR
+            orig_vault = config.VAULT
+            M.ingest = lambda b, name, vision_fn=None, vault=None: (
+                Path(td) / "错题" / "n.md", {"subject": "数学", "knowledge_points": ["x"],
+                                             "question": "q", "error_reason": "e"})
+            webui_ext.UPLOAD_DIR = Path(td) / "keep"
+            config.VAULT = Path(td)
+            try:
+                r = client.post("/api/mistake/ingest",
+                                files={"file": ("p.png", b"\x89PNGxxxx", "image/png")})
+                self.assertEqual(r.status_code, 200)
+                self.assertTrue(r.json()["ok"])
+                self.assertIn("错题", r.json()["note_rel"])
+                # 原图留档（mistake-<hex>-<原名>.png）
+                self.assertTrue(any(webui_ext.UPLOAD_DIR.rglob("*p.png")))
+
+                def boom(b, name, vision_fn=None, vault=None):
+                    raise M.MistakeError("图片不是题目（识别为：风景），未入库")
+                M.ingest = boom
+                r2 = client.post("/api/mistake/ingest",
+                                 files={"file": ("q.png", b"\x89PNG", "image/png")})
+                self.assertEqual(r2.status_code, 422)
+                self.assertIn("风景", r2.json()["detail"])
+            finally:
+                M.ingest, webui_ext.UPLOAD_DIR = orig_ingest, orig_dir
+                config.VAULT = orig_vault
+
+
+class TestAgentFeed(unittest.TestCase):
+    """记忆流 + 报纸头条：事件日志、wrap 钩子、聚合端点。"""
+
+    def test_log_and_tail_roundtrip(self):
+        from vault_rag import agent_feed
+        with tempfile.TemporaryDirectory() as td:
+            from vault_rag import config
+            orig = config.DATA_DIR
+            config.DATA_DIR = Path(td)
+            agent_feed.AGENT_LOG = Path(td) / "agent_log.jsonl"
+            try:
+                agent_feed.log_event("write_note", "写入", "记忆/a.md",
+                                     client="Claude Code")
+                agent_feed.log_event("update_note", "修改", "记忆/b.md")
+                evts = agent_feed.tail(10)
+                self.assertEqual(len(evts), 2)
+                self.assertEqual(evts[0]["path"], "记忆/b.md")     # 新在前
+                self.assertEqual(evts[1]["client"], "Claude Code")
+            finally:
+                config.DATA_DIR = orig
+                agent_feed.AGENT_LOG = orig / "agent_log.jsonl"
+
+    def test_wrap_logs_after_success(self):
+        from vault_rag import agent_feed
+        with tempfile.TemporaryDirectory() as td:
+            from vault_rag import config
+            orig = config.DATA_DIR
+            config.DATA_DIR = Path(td)
+            agent_feed.AGENT_LOG = Path(td) / "agent_log.jsonl"
+            try:
+                @agent_feed.wrap
+                def write_note(path: str, title: str = "") -> dict:
+                    return {"success": True, "path": path}
+                r = write_note("记忆/x.md", title="t")
+                self.assertEqual(r["path"], "记忆/x.md")
+                evts = agent_feed.tail(5)
+                self.assertEqual(len(evts), 1)
+                self.assertEqual(evts[0]["tool"], "write_note")
+                self.assertEqual(evts[0]["path"], "记忆/x.md")
+            finally:
+                config.DATA_DIR = orig
+                agent_feed.AGENT_LOG = orig / "agent_log.jsonl"
+
+    def test_headline_aggregates(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from vault_rag import agent_feed, config, webui_ext
+        app = FastAPI(); app.include_router(webui_ext.router)
+        client = TestClient(app)
+        with tempfile.TemporaryDirectory() as td:
+            orig_data, orig_vault = config.DATA_DIR, config.VAULT
+            orig_log = agent_feed.AGENT_LOG
+            config.DATA_DIR = Path(td)
+            agent_feed.AGENT_LOG = Path(td) / "agent_log.jsonl"
+            agent_feed.log_event("write_note", "写入", "记忆/头条测试.md",
+                                 client="测试代理")
+            vault = Path(td) / "vault"; vault.mkdir()
+            (vault / "错题").mkdir()
+            (vault / "错题" / "m1.md").write_text(
+                "---\ntype: mistake\nsubject: 数学\nreview_due: 2026-01-01\n---\n# m1",
+                encoding="utf-8")
+            config.VAULT = vault
+            orig_db = config.DB_PATH
+            config.DB_PATH = Path(td) / "empty.db"
+            try:
+                d = client.get("/api/headline").json()
+                self.assertEqual(d["latest"]["path"], "记忆/头条测试.md")
+                self.assertEqual(len(d["due_reviews"]), 1)
+                self.assertEqual(d["due_reviews"][0]["subject"], "数学")
+                self.assertEqual(d["new_7d"], 0)          # 空 DB 不炸
+                f = client.get("/api/feed").json()
+                self.assertGreaterEqual(len(f["events"]), 1)
+            finally:
+                config.DATA_DIR, config.VAULT, config.DB_PATH = orig_data, orig_vault, orig_db
+                agent_feed.AGENT_LOG = orig_log
+
+    def test_due_reviews_filters_future(self):
+        from vault_rag import mistake as M
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / "错题"; d.mkdir()
+            (d / "past.md").write_text(
+                "---\nsubject: 已到期\nreview_due: 2026-01-01\n---\nx", encoding="utf-8")
+            (d / "future.md").write_text(
+                "---\nsubject: 未到期\nreview_due: 2999-01-01\n---\nx", encoding="utf-8")
+            due = M.due_reviews(vault=Path(td))
+            self.assertEqual([x["rel"] for x in due], ["错题/past.md"])
+
+
 if __name__ == "__main__":
     unittest.main()

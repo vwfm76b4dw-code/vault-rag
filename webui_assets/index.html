@@ -101,6 +101,18 @@
 
       <!-- ============ 看板 ============ -->
       <section id="panel-board" class="panel">
+        <div class="masthead" id="masthead">
+          <div class="mh-top">
+            <span class="mh-title">知识库早报</span>
+            <span class="mh-date mono" id="mh-date"></span>
+          </div>
+          <div class="mh-headline" id="mh-headline">…</div>
+          <div class="mh-cols">
+            <div class="mh-col"><h4>代理动作</h4><div id="mh-feed" class="mh-list"></div></div>
+            <div class="mh-col"><h4>近 7 天新入库</h4><div id="mh-new" class="mh-list"></div></div>
+            <div class="mh-col"><h4>今日待复习 · 错题复利</h4><div id="mh-due" class="mh-list"></div></div>
+          </div>
+        </div>
         <div class="cards" id="cards"></div>
         <div class="board-grid">
           <div class="board-card glass">
@@ -128,7 +140,7 @@
             <p>拖拽文件到此处，或</p>
             <input type="file" id="upload-input" multiple style="display:none">
             <button class="primary" onclick="document.getElementById('upload-input').click()">选择文件（可多选）</button>
-            <p class="muted small" id="upload-hint">支持 .md/.txt 等文本文件；PDF 等二进制格式将作为后续多模态解析预留</p>
+            <p class="muted small" id="upload-hint">📸 图片（错题拍照）→ AI 识别批改生成错题笔记；.md/.txt 等文本文件 → 直接入库；其它二进制不支持</p>
           </div>
           <div id="upload-result" class="msg"></div>
           <div class="row" id="upload-actions" style="display:none">
@@ -364,6 +376,16 @@
             <div class="row"><input id="modal-key" type="password" placeholder="sk-…（留空则不改）"></div>
             <div class="row"><button id="modal-key-save" class="primary">保存全局 Key</button>
               <span id="modal-key-msg" class="msg"></span></div>
+            <hr class="sep">
+            <h3>问答后端 · OpenAI 兼容</h3>
+            <p class="muted small">把 vault-rag 加为任意 OpenAI 兼容客户端（Cherry Studio /
+              ChatBox / agent CLI…）的「供应商」，提问即自动检索注入知识库。鉴权用下面的 key。</p>
+            <div class="row"><span class="lbl-fixed">Base URL</span>
+              <input id="backend-url" readonly class="mono" style="max-width:260px"></div>
+            <div class="row"><span class="lbl-fixed">API Key</span>
+              <input id="backend-key" readonly class="mono" style="max-width:260px">
+              <button id="btn-backend-copy">复制接入配置</button>
+              <span id="backend-msg" class="msg"></span></div>
           </div>
           <div class="board-card glass">
             <h3>系统</h3>

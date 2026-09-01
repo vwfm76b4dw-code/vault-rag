@@ -22,8 +22,8 @@ import webbrowser
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -144,6 +144,124 @@ def api_chat(req: ChatReq):
                     for h in hits]})
         except Exception as e:
             yield _sse({"type": "error", "message": f"{type(e).__name__}: {e}"})
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+# ---------------- OpenAI 兼容问答后端（vault-rag 即服务） ----------------
+# 灵魂模块②：任何 OpenAI 兼容客户端把本服务加为「供应商」即获得整个知识库——
+# 检索自动注入，问答页只是这条端点的调试台。
+
+def _backend_key() -> str:
+    """问答后端鉴权 key：首用自动生成并持久化（设置页可见）。"""
+    s = lib.load_local_settings()
+    k = s.get("backend_key")
+    if not k:
+        import uuid as _uuid
+        k = "vrk-" + _uuid.uuid4().hex
+        lib.save_local_settings({"backend_key": k})
+    return k
+
+
+def _auth_ok(request) -> bool:
+    import hmac as _hmac
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return False
+    return _hmac.compare_digest(auth[7:].strip(), _backend_key())
+
+
+def _last_user_text(messages: list[dict]) -> str:
+    """取最后一条 user 消息的文本（兼容 OpenAI 多模态 parts 格式）。"""
+    for m in reversed(messages):
+        if m.get("role") != "user":
+            continue
+        c = m.get("content")
+        if isinstance(c, str):
+            return c
+        if isinstance(c, list):                     # [{type:"text","text":..}, ..]
+            return "\n".join(p.get("text", "") for p in c
+                             if isinstance(p, dict) and p.get("type") == "text")
+    return ""
+
+
+class V1ChatReq(BaseModel):
+    model: str = ""
+    messages: list[dict]
+    stream: bool = False
+    temperature: float | None = None
+    top_k: int | None = None
+
+
+def _rag_hits(query: str, top_k: int) -> list[dict]:
+    """检索；端点离线时安静退关键词（与 /api/chat 同策略）。"""
+    try:
+        with _EMBED_LOCK:
+            return lib.retrieve(query, top_k=top_k)
+    except Exception:
+        with _EMBED_LOCK:
+            return lib.keyword_fallback(query, top_k=top_k)
+
+
+@app.get("/api/backend/info")
+def api_backend_info():
+    """控制台设置页用：本机问答后端的 key 与接入路径。"""
+    return {"key": _backend_key(), "path": "/v1/chat/completions",
+            "model": "vault-rag"}
+
+
+@app.post("/v1/chat/completions")
+def v1_chat_completions(req: V1ChatReq, request: Request):
+    import json as _json
+    import time as _time
+    import uuid as _uuid
+
+    if not _auth_ok(request):
+        return JSONResponse({"error": {"message": "无效的 backend key（设置页查看）",
+                                       "type": "auth_error"}}, status_code=401)
+    if not req.messages or not _last_user_text(req.messages).strip():
+        return JSONResponse({"error": {"message": "messages 缺少用户消息",
+                                       "type": "invalid_request_error"}},
+                            status_code=400)
+
+    query = _last_user_text(req.messages).strip()
+    top_k = max(1, min(12, req.top_k or int(lib.get_pref("top_k", 6))))
+    hits = _rag_hits(query, top_k)
+    ctx = lib.build_context_block(hits)
+    rag_system = {"role": "system", "content":
+                  "你是用户的个人知识库助手。以下是 vault-rag 从知识库检索到的相关片段：\n\n"
+                  + ctx + "\n\n回答时优先依据以上片段；片段未覆盖的部分可用常识补充，但不要虚构片段内容。"}
+    messages = [rag_system] + [m for m in req.messages
+                               if isinstance(m, dict) and m.get("role")]
+    cid = "chatcmpl-" + _uuid.uuid4().hex[:12]
+    created = int(_time.time())
+    sources = [{"rel_path": h["rel_path"], "section": h.get("section") or "",
+                "score": round(h["score"], 4)} for h in hits]
+
+    if not req.stream:
+        text = "".join(lib.stream_chat(messages, temperature=req.temperature))
+        return {"id": cid, "object": "chat.completion", "created": created,
+                "model": req.model or "vault-rag",
+                "choices": [{"index": 0,
+                             "message": {"role": "assistant", "content": text},
+                             "finish_reason": "stop"}],
+                "vault_rag_sources": sources}
+
+    def gen():
+        acc = []
+        try:
+            for delta in lib.stream_chat(messages, temperature=req.temperature):
+                acc.append(delta)
+                yield f"data: {_json.dumps({'id': cid, 'object': 'chat.completion.chunk', 'created': created, 'model': req.model or 'vault-rag', 'choices': [{'index': 0, 'delta': {'content': delta}, 'finish_reason': None}]}, ensure_ascii=False)}\n\n"
+            yield f"data: {_json.dumps({'id': cid, 'object': 'chat.completion.chunk', 'created': created, 'model': req.model or 'vault-rag', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]}, ensure_ascii=False)}\n\n"
+        except lib.ChatUnavailable as e:
+            if acc:
+                yield f"data: {_json.dumps({'error': {'message': f'生成中断: {e}', 'type': 'chat_unavailable'}}, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {_json.dumps({'error': {'message': str(e), 'type': 'chat_unavailable'}}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no"})

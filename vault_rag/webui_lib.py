@@ -270,6 +270,38 @@ def chat_once(messages: list[dict], temperature: float | None = None) -> str:
     return r.json()["choices"][0]["message"]["content"]
 
 
+def vision_chat(prompt: str, image_bytes: bytes,
+                temperature: float = 0.2) -> str:
+    """视觉问答（错题识别用）：OpenAI 多模态 parts 格式，走当前供应商。
+
+    供应商不支持图像输入时会得到非 200 / 内容异常 → 一律 ChatUnavailable，
+    由调用方转成用户可读的提示（绝不静默）。
+    """
+    import base64 as _b64
+    prof = active_provider()
+    key = _provider_key(prof)
+    local = _is_local_url(prof["url"])
+    if not key and not local:
+        raise ChatUnavailable("未配置 API key（设置面板可填）")
+    b64 = _b64.b64encode(image_bytes).decode()
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    r = requests.post(
+        prof["url"], headers=headers,
+        json={"model": prof["model"], "temperature": temperature,
+              "messages": [{"role": "user", "content": [
+                  {"type": "text", "text": prompt},
+                  {"type": "image_url",
+                   "image_url": {"url": f"data:image/png;base64,{b64}"}}]}]},
+        timeout=(15, 120))
+    if r.status_code != 200:
+        hint = r.text[:150]
+        raise ChatUnavailable(f"供应商不支持图像输入或请求失败（HTTP {r.status_code}）：{hint}")
+    try:
+        return r.json()["choices"][0]["message"]["content"]
+    except (KeyError, ValueError) as e:
+        raise ChatUnavailable(f"视觉响应结构异常：{e}") from e
+
+
 def test_provider(timeout: float = 15.0) -> dict:
     """连通性测试：不发流，问一声"ping"。返回 {ok, latency_ms, detail}。"""
     t0 = time.time()

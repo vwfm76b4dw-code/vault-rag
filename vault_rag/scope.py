@@ -38,7 +38,7 @@ def ensure_include_file() -> Path:
             "# vault-rag 索引范围声明（.gitignore 语法）\n"
             "#   目录规则 'dir/' | 文件 'path/to.md' | 通配 '*.md'（仅根级，跨目录用 '**'）\n"
             "#   '!排除' | '@绝对路径 as external/别名.md'（vault 外部文件）\n\n"
-            "知识/\n项目/\n研究/\n笔记/\n*.md\n",
+            "知识/\n项目/\n研究/\n笔记/\n记忆/\n错题/\n*.md\n",
             encoding="utf-8")
     return INCLUDE_PATH
 

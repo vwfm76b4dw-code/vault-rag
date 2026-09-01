@@ -168,6 +168,77 @@ async def upload_files(files: list[UploadFile] = File(...)):
             "saved": saved, "skipped": skipped, "message": message}
 
 
+# ---------------- 错题本（灵魂功能：拍照 → 结构化 → 可检索可复习） ----------------
+
+@router.post("/mistake/ingest")
+async def mistake_ingest(file: UploadFile = File(...)):
+    """图片拖入上传页自动路由到这里：视觉识别批改 → 生成错题笔记 → vault/错题/。"""
+    import uuid
+    from vault_rag import mistake as M
+    from vault_rag.config import VAULT
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "空文件")
+    kind = classify_upload(file.filename or "", raw[:1 << 16])
+    if kind == "binary":
+        raise HTTPException(422, "这不是图片，请走文档上传")
+    # 原图留档（data/uploads/ 不占 include 规则，笔记才是检索主体）
+    keep = UPLOAD_DIR / time.strftime("%Y%m%d-%H%M%S") / f"mistake-{uuid.uuid4().hex[:6]}-{Path(file.filename or 'photo.png').name}"
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    keep.write_bytes(raw)
+    try:
+        note_path, preview = M.ingest(raw, keep.name)
+    except M.MistakeError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        name = type(e).__name__
+        raise HTTPException(502, f"视觉识别失败（{name}）：{e}。"
+                              f"请在「模型·生成供应商」选择支持图像输入的档案。")
+    rel = note_path.relative_to(VAULT).as_posix()
+    return {"ok": True, "note_rel": rel,
+            "preview": preview,
+            "message": f"错题已入库：{rel}（明日进入复习队列）"}
+
+
+# ---------------- 记忆流 + 报纸头条（共享大脑的心跳） ----------------
+
+@router.get("/feed")
+def feed(limit: int = 50):
+    """代理活动记忆流：MCP 写入事件倒序。"""
+    from vault_rag import agent_feed
+    return {"events": agent_feed.tail(limit=max(1, min(200, limit)))}
+
+
+@router.get("/headline")
+def headline():
+    """报纸头条：最新代理动作 + 近 7 天新入库 + 今日到期错题。"""
+    import time as _time
+    from vault_rag import agent_feed, mistake as M
+    from vault_rag import config as _cfg
+    evts = agent_feed.tail(limit=20)
+    latest = evts[0] if evts else None
+    recent_notes, new_7d = [], 0
+    try:
+        week_ago = _time.time() - 7 * 86400
+        con = repo_admin._con(readonly=True)
+        try:
+            new_7d = con.execute(
+                "SELECT COUNT(*) FROM notes WHERE mtime >= ?",
+                (week_ago,)).fetchone()[0]
+            recent = con.execute(
+                "SELECT rel_path FROM notes WHERE mtime >= ? "
+                "ORDER BY mtime DESC LIMIT 5", (week_ago,)).fetchall()
+            recent_notes = [r["rel_path"] for r in recent]
+        finally:
+            con.close()
+    except Exception:
+        pass
+    due = M.due_reviews(vault=_cfg.VAULT, limit=6)
+    return {"latest": latest, "feed": evts[:6], "new_7d": new_7d,
+            "recent_notes": recent_notes, "due_reviews": due,
+            "date": _time.strftime("%Y-%m-%d %A")}
+
+
 # ---------------- 系统自检 ----------------
 
 @router.get("/selftest")

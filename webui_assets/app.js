@@ -594,7 +594,8 @@ function countUp(el, target) {
 }
 async function loadBoard() {
   try {
-    const [st, d] = await Promise.all([api("/api/status"), api("/api/dashboard")]);
+    const [st, d, hl] = await Promise.all([api("/api/status"), api("/api/dashboard"),
+                                           api("/api/headline").catch(() => null)]);
     const cards = [
       ["笔记", st.notes, ""], ["文本块", st.chunks, ""],
       ["向量", st.vectors, st.consistent ? "" : "与文本块不一致!"],
@@ -636,6 +637,28 @@ async function loadBoard() {
     $("recent").querySelectorAll("a").forEach((a) =>
       a.addEventListener("click", () =>
         post("/api/open", { rel_path: a.dataset.path }).catch((e) => alert(e.message))));
+
+    /* ---- 报纸头条 ---- */
+    if (hl) {
+      $("mh-date").textContent = hl.date;
+      const L = hl.latest;
+      $("mh-headline").innerHTML = L
+        ? `<span class="mh-tag">${escapeHtml(L.client)}</span> ${escapeHtml(L.action)} <b>${escapeHtml(L.path)}</b>` +
+          `<span class="muted small"> · ${escapeHtml((L.ts || "").slice(11))}</span>`
+        : `暂无代理动作——你的 AI 们还没写过记忆，等它们开工`;
+      $("mh-feed").innerHTML = hl.feed.length ? hl.feed.map((e) =>
+        `<div class="mh-item"><span class="muted">${escapeHtml((e.ts || "").slice(5, 16))}</span> ` +
+        `${escapeHtml(e.action)} <span title="${escapeHtml(e.path)}">${escapeHtml(e.path)}</span></div>`).join("")
+        : `<span class="empty">暂无</span>`;
+      $("mh-new").innerHTML =
+        `<div class="mh-item"><b>${hl.new_7d}</b> 篇新增</div>` +
+        (hl.recent_notes || []).map((p) =>
+          `<div class="mh-item" title="${escapeHtml(p)}">${escapeHtml(p)}</div>`).join("");
+      $("mh-due").innerHTML = hl.due_reviews.length ? hl.due_reviews.map((m) =>
+        `<div class="mh-item">📕 <span title="${escapeHtml(m.rel)}">${escapeHtml(m.rel)}</span>` +
+        `<span class="muted">${escapeHtml(m.subject)}</span></div>`).join("")
+        : `<span class="empty">无到期复习 · 复利进行中</span>`;
+    }
   } catch (e) {
     $("cards").innerHTML = `<div class="card glass bad"><div class="num">✗</div><div class="lbl">${escapeHtml(e.message)}</div></div>`;
   }
@@ -654,9 +677,23 @@ async function loadManage() {
       `<div class="row"><span class="muted">Key</span><span>${cfg.key_set ? "✓ 已配置" : "✗ 未配置"}</span></div>` +
       `<div class="row"><span class="muted">模型</span><span>${escapeHtml(cfg.model)}</span></div>` +
       `<div class="row"><span class="muted">端点</span><span style="font-size:11px;word-break:break-all">${escapeHtml(cfg.endpoint)}</span></div>`;
+    try {
+      const bi = await api("/api/backend/info");
+      $("backend-url").value = `${location.origin}/v1`;
+      $("backend-key").value = bi.key;
+    } catch (_) { /* 后端信息失败不阻塞设置页 */ }
     pollIndex();
   } catch (e) { setMsg("scope-msg", e.message, false); }
 }
+
+$("btn-backend-copy").addEventListener("click", async () => {
+  const cfg = { name: "vault-rag", base_url: $("backend-url").value,
+                api_key: $("backend-key").value, model: "vault-rag" };
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(cfg, null, 2));
+    setMsgAuto("backend-msg", "✓ 已复制接入配置 JSON", true);
+  } catch (e) { setMsg("backend-msg", e.message, false); }
+});
 
 $("btn-scope-save").addEventListener("click", async () => {
   try {
@@ -946,22 +983,42 @@ upInput.addEventListener("change", () => {
   upInput.value = "";
 });
 async function sendUpload(fileList) {
-  const fd = new FormData();
-  let n = 0;
-  for (const f of fileList) { fd.append("files", f); n++; }
-  if (!n) return;
+  const files = [...fileList];
+  if (!files.length) return;
+  const imgs = files.filter((f) => (f.type || "").startsWith("image/"));
+  const docs = files.filter((f) => !(f.type || "").startsWith("image/"));
   $("upload-result").className = "msg muted";
-  $("upload-result").textContent = `上传中（${n} 个文件）…`;
+  $("upload-result").textContent = `处理中（${files.length} 个文件，图片走错题识别）…`;
+  const out = { mistakes: [], mkErr: [], saved: [], skipped: [], batch: "" };
   try {
-    const r = await fetch("/api/upload", { method: "POST", body: fd });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.detail || r.statusText);
-    const detail = (d.saved.length ? "✓ " : "✗ ") + d.message +
-      (d.skipped.length ? `（跳过: ${d.skipped.join("；")}）` : "");
-    $("upload-result").className = d.ok ? "msg ok" : "msg err";
-    $("upload-result").textContent = detail;
-    $("upload-actions").style.display = d.ok ? "flex" : "none";
-    $("upload-batchdir").textContent = d.batch_dir;
+    for (const f of imgs) {
+      const fd = new FormData(); fd.append("file", f);
+      const r = await fetch("/api/mistake/ingest", { method: "POST", body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.ok) out.mistakes.push(d);
+      else out.mkErr.push(`${f.name}（${d.detail || r.statusText}）`);
+    }
+    if (docs.length) {
+      const fd = new FormData();
+      docs.forEach((f) => fd.append("files", f));
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || r.statusText);
+      out.saved = d.saved; out.skipped = d.skipped; out.batch = d.batch_dir;
+    }
+    const parts = [];
+    if (out.mistakes.length)
+      parts.push(`📸 错题 ${out.mistakes.length} 篇已入库（${
+        out.mistakes.map((m) => m.note_rel).join("；")})`);
+    if (out.saved.length) parts.push(`✓ 文档 ${out.saved.length} 个已入库`);
+    if (out.skipped.length) parts.push(`跳过: ${out.skipped.join("；")}`);
+    if (out.mkErr.length) parts.push(`错题失败: ${out.mkErr.join("；")}`);
+    const okAny = out.mistakes.length + out.saved.length > 0;
+    $("upload-result").className = okAny ? "msg ok" : "msg err";
+    $("upload-result").textContent = (okAny ? "✓ " : "✗ ") +
+      (parts.join("　") || "没有文件入库");
+    $("upload-actions").style.display = okAny ? "flex" : "none";
+    $("upload-batchdir").textContent = out.batch;
     $("btn-upload-index").onclick = async () => {
       $("upload-actions").style.display = "none";
       await post("/api/index/refresh");
