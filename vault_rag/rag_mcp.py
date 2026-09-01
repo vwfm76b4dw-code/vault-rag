@@ -156,6 +156,22 @@ def hybrid_search(query: str, top_k: int = 8) -> dict:
 
 
 @mcp.tool()
+def multimodal_search(query: str, top_k: int = 5) -> dict:
+    """检索 PDF/PPTX 多模态页（云端页描述/文字层/复盘摘要），命中带页码与原文件路径。
+
+    Args:
+        query: 自然语言问题（口语化长句也可以）。
+        top_k: 返回页数上限。
+    """
+    from vault_rag.multimodal import store
+    hits = store.search(query_text=query, top_k=max(1, min(20, top_k)))
+    return {"query": query, "hits": [
+        {"file": Path(h["src"]).name, "src": h["src"], "page": h["page"],
+         "kind": h["kind"], "score": h["score"], "text": (h["text"] or "")[:300]}
+        for h in hits]}
+
+
+@mcp.tool()
 def rag_status() -> dict:
     """查看 RAG 索引状态：覆盖篇数、块数、向量维度、上次索引时间。"""
     con = sqlite3.connect(RAG_DB)

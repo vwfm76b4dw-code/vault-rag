@@ -28,18 +28,24 @@ SERVERS = {
         "title": "vault_rag.rag_mcp（与控制台同步）",
         "cmd": [PY, "-m", "vault_rag.rag_mcp"],
         "cwd": str(REPO),
-        "expect_tools": ["semantic_search", "hybrid_search", "rag_status", "refresh_index"],
+        "expect_tools": ["semantic_search", "hybrid_search", "multimodal_search",
+                         "rag_status", "refresh_index"],
         "call": {"name": "semantic_search",
                  "arguments": {"query": "agent 怎么防遗忘", "top_k": 3}},
+        "call2": {"name": "multimodal_search",
+                  "arguments": {"query": "二次函数 交点", "top_k": 3}},
         "timeout": 180,
     },
     "obsidian": {
         "title": "rag-obsidian（Claude Code 注入版）",
         "cmd": [PY, str(Path.home() / ".claude/mcp_servers/rag-obsidian/server.py")],
         "cwd": str(Path.home() / ".claude/mcp_servers/rag-obsidian"),
-        "expect_tools": ["semantic_search", "get_note_relations", "note_freshness"],
+        "expect_tools": ["semantic_search", "get_note_relations", "note_freshness",
+                         "multimodal_search"],
         "call": {"name": "semantic_search",
                  "arguments": {"query": "agent 怎么防遗忘", "top_k": 3}},
+        "call2": {"name": "multimodal_search",
+                  "arguments": {"query": "二次函数 交点", "top_k": 3}},
         "timeout": 180,
     },
 }
@@ -142,6 +148,25 @@ def run_server(name: str, cfg: dict) -> tuple[bool, list[str]]:
                 notes.append(f"tools/call 空结果（{dt:.1f}s）")
             else:
                 notes.append(f"tools/call ✓ {dt:.1f}s · 返回 {len(text)} 字符 · 预览: {text[:80]}")
+
+        # 3.5) multimodal_search（PDF/PPTX 页级命中）
+        if "call2" in cfg and cfg["call2"]["name"] in tools:
+            cli.send({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                      "params": {"name": cfg["call2"]["name"],
+                                 "arguments": cfg["call2"]["arguments"]}})
+            resp = cli.wait_resp(4, 60)
+            if "error" in resp:
+                ok = False
+                notes.append("call2 multimodal_search 失败: "
+                             + json.dumps(resp["error"], ensure_ascii=False)[:140])
+            else:
+                content = resp.get("result", {}).get("content", [])
+                text = "".join(c.get("text", "") for c in content if c.get("type") == "text")
+                pages = text.count('"page"')
+                notes.append(f"call2 multimodal_search ✓ 返回 {len(text)} 字符 · "
+                             f"页命中 {pages} · 预览: {text[:90]}")
+                if not text:
+                    ok = False
     finally:
         cli.close()
     return ok, notes

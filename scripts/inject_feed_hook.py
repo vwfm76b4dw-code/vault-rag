@@ -30,6 +30,14 @@ src = SERVER.read_text(encoding="utf-8")
 if MARKER in src:
     print("already injected")
 else:
+    lines = src.splitlines()
+    gi = next((i for i, l in enumerate(lines)
+               if l.strip().startswith('if __name__')), len(lines))
+    # 必须插在 mcp.run() 守卫之前——追加到文件尾的代码在 stdio 服务下永不执行
     SERVER.with_suffix(".py.bak_prefeed").write_text(src, encoding="utf-8")
-    SERVER.write_text(src + HOOK, encoding="utf-8")
+    srv_bak = Path(str(SERVER) + ".bak_prefeed")
+    fixed = "
+".join(lines[:gi] + HOOK.splitlines() + lines[gi:]) + "
+"
+    Path(str(SERVER)).write_text(fixed, encoding="utf-8")
     print("injected OK ->", SERVER)
