@@ -109,8 +109,12 @@ def stats() -> dict:
 
 
 def search(query_vec=None, query_text: str = "", top_k: int = 6) -> list[dict]:
-    """向量 + FTS 双路召回，分数归一后合并（同一块取最高分）。"""
-    out: dict[int, dict] = {}
+    """向量 + FTS 双路召回，各自归一后合并（同一块取最高分）。
+
+    归一化是必须的：FTS bm25 分与余弦相似度量纲不同，
+    不归一会导致一条路永远压死另一条（实测笔记 FTS 0.8 vs 照片余弦 0.5）。
+    """
+    vec_hits: list[tuple[float, object]] = []
     if query_vec is not None:
         with cx() as c:
             rows = c.execute(
@@ -120,9 +124,10 @@ def search(query_vec=None, query_text: str = "", top_k: int = 6) -> list[dict]:
         q = query_vec.astype("float32")
         q /= max(float(np.linalg.norm(q)), 1e-9)
         for r in rows:
-            v = __import__("numpy").frombuffer(r["vec"], dtype="float32")
+            v = np.frombuffer(r["vec"], dtype="float32")
             sim = float(q @ (v / max(float(np.linalg.norm(v)), 1e-9)))
-            _merge(out, r, sim, "image")
+            vec_hits.append((sim, r))
+    fts_hits: list[tuple[float, object]] = []
     if query_text.strip():
         q = query_text.strip()
         terms = [t for t in q.split() if len(t) >= 3] or [q]   # trigram 需 ≥3 字
@@ -137,7 +142,7 @@ def search(query_vec=None, query_text: str = "", top_k: int = 6) -> list[dict]:
             except sqlite3.OperationalError:
                 rows = []
             if not rows and len(terms) == 1 and len(terms[0]) > 6:
-                # 长整句查询：滑 4 字窗取grams OR 匹配（口语化问题常见）
+                # 长整句查询：滑 4 字窗取 grams OR 匹配（口语化问题常见）
                 s = terms[0]
                 grams = [s[i:i + 4] for i in range(0, min(len(s) - 3, 32), 3)][:8]
                 ftsq2 = " OR ".join(f'"{g}"' for g in grams)
@@ -169,20 +174,37 @@ def search(query_vec=None, query_text: str = "", top_k: int = 6) -> list[dict]:
                         if n:
                             scored.append((n / len(bigrams), r))
                     scored.sort(key=lambda x: -x[0])
-                    rows = [dict(r, rank=1.0 / s - 1) for s, r in
-                            scored[:top_k * 4]]
-        for r in rows:
-            _merge(out, r, 1.0 / (1.0 + max(float(r["rank"]), 0.0)), "fts")
-    ranked = sorted(out.values(), key=lambda x: -x["score"])
+                    for s, r in scored[:top_k * 4]:
+                        fts_hits.append((s, r))
+            else:
+                for r in rows:
+                    # FTS5 bm25 返回 ≤0 的负分（越负越相关）
+                    fts_hits.append((float(r["rank"]), r))
+
+    # RRF（倒数排名融合）：双路都上榜的块自然胜出，
+    # 天然消除"两路各自归一的 1.0 并列顶掉正主"的问题
+    K = 60
+    rrf: dict[int, float] = {}
+    meta: dict[int, dict] = {}
+
+    def _rrf_merge(pairs, how):
+        for i, (_s, r) in enumerate(pairs):
+            rid = r["id"]
+            rrf[rid] = rrf.get(rid, 0.0) + 1.0 / (K + i + 1)
+            if rid not in meta:
+                meta[rid] = {"id": rid, "src": r["src"], "page": r["page"],
+                             "kind": r["kind"],
+                             "text": (r["text"] or "")[:300],
+                             "via": how, "paths": [how]}
+            elif how not in meta[rid]["paths"]:
+                meta[rid]["paths"].append(how)
+
+    _rrf_merge(vec_hits, "image")
+    _rrf_merge(fts_hits, "fts")
+    ranked = sorted(meta.values(), key=lambda x: -rrf[x["id"]])
+    for row in ranked:
+        row["score"] = round(rrf[row["id"]], 4)
     return ranked[:top_k]
-
-
-def _merge(out: dict, r, score: float, how: str) -> None:
-    rid = r["id"]
-    cur = {"id": rid, "src": r["src"], "page": r["page"], "kind": r["kind"],
-           "text": (r["text"] or "")[:300], "score": round(score, 4), "via": how}
-    if rid not in out or score > out[rid]["score"]:
-        out[rid] = cur
 
 
 def get_chunk(chunk_id: int) -> dict | None:
