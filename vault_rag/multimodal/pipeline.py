@@ -148,7 +148,9 @@ def ingest_file(path: str, strategy: str | None = None,
     except Exception as e:
         if progress:
             state.update(running=False, ok=False,
-                         log=(traceback.format_exc()[-400:]), finished=time.time())
+                         log=f"{type(e).__name__}: {e}\n"
+                             f"{traceback.format_exc()[-300:]}",
+                         finished=time.time())
         store.register_source(src, kind, len(pages), strategy, status=f"error: {e}")
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "src": src}
 
@@ -161,7 +163,7 @@ def ingest_async(path: str, strategy: str | None = None) -> None:
                 ingest_file(path, strategy)
             except Exception:
                 state.update(running=False, ok=False,
-                             log=traceback.format_exc()[-400:])
+                             log=f"{type(e).__name__}: {e}")
     threading.Thread(target=_run, daemon=True,
                      name="mm-ingest").start()
 

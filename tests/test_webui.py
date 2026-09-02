@@ -763,7 +763,15 @@ class TestMultimodal(unittest.TestCase):
         called = {}
         td2 = tempfile.mkdtemp()
         real_pdf = Path(td2) / "x.pdf"
-        real_pdf.write_bytes(b"%PDF-1.4 fake")
+        try:
+            import img2pdf
+            import io as _io
+            from PIL import Image
+            _b = _io.BytesIO()
+            Image.new("RGB", (60, 40), "white").save(_b, format="PNG")
+            real_pdf.write_bytes(img2pdf.convert([_b.getvalue()]))
+        except ImportError:
+            real_pdf.write_bytes(b"%PDF-1.4 fake")   # 无 img2pdf 时退占位（探测会 422）
         orig_async = pipeline.ingest_async
         pipeline.ingest_async = lambda path, strategy=None: called.update(
             path=path, strategy=strategy)

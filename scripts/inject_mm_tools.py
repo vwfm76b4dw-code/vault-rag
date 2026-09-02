@@ -40,16 +40,51 @@ except Exception:
 '''
 TOOL = TOOL.replace("__MARKER__", MARKER).replace("__REPO__", REPO.as_posix())
 
+MARKER2 = "vault-rag semantic unification"
+TOOL2 = """
+
+# == __MARKER2__ (auto-injected, idempotent) ============================
+# 注入版 standalone semantic_search 缺少仓库 search.py 的能力
+# （文件名置顶 / hybrid RRF / FTS 兜底链）——统一替换为仓库实现（单一事实来源）。
+try:
+    from vault_rag.search import search as _vrs_search
+
+    def _semantic_search_unified(query: str, top_k: int = 8, scope_dir: str = "") -> dict:
+        hits = _vrs_search(query, top_k=max(1, min(20, top_k)),
+                           scope_dir=scope_dir or None)
+        results = []
+        for h in hits:
+            results.append({"score": round(h["score"], 4), "path": h["rel_path"],
+                            "section": h.get("section") or "",
+                            "snippet": (h["text"] or "").replace("\\n", " ")[:200]})
+        return {"query": query, "count": len(results), "results": results}
+
+    _t_ss = mcp._tool_manager._tools.get("semantic_search")
+    if _t_ss is not None and getattr(_t_ss.fn, "__module__", "") != "vault_rag.search":
+        _t_ss.fn = _semantic_search_unified
+except Exception:
+    import traceback as _tb2
+    _tb2.print_exc()
+"""
+TOOL2 = TOOL2.replace("__MARKER2__", MARKER2).replace("__REPO__", REPO.as_posix())
+
 src = SERVER.read_text(encoding="utf-8")
-if MARKER in src:
-    print("already injected")
+pending: list[str] = []
+if MARKER2 not in src:
+    pending.append(TOOL2)
+if MARKER not in src:
+    pending.append(TOOL)
+if not pending:
+    print("nothing to do（两块均已在）")
 else:
     lines = src.splitlines()
     gi = next((i for i, l in enumerate(lines)
-               if l.strip().startswith('if __name__')), len(lines))
+               if l.strip().startswith("if __name__")), len(lines))
+    # 必须插在 mcp.run() 守卫之前（stdio 服务下尾部代码永不执行）
+    new_lines = lines[:gi]
+    for block in pending:
+        new_lines += block.splitlines()
+    new_lines += lines[gi:]
     SERVER.with_suffix(".py.bak_pre(mm)").write_text(src, encoding="utf-8")
-    fixed = "
-".join(lines[:gi] + TOOL.splitlines() + lines[gi:]) + "
-"
-    Path(str(SERVER)).write_text(fixed, encoding="utf-8")
-    print("injected OK ->", SERVER)
+    Path(str(SERVER)).write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    print(f"injected {len(pending)} block(s) ->", SERVER)

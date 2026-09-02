@@ -116,16 +116,21 @@ IMAGE_HINT = "图片暂不支持索引（多模态索引规划中），已跳过
 
 
 def classify_upload(filename: str, head: bytes) -> str:
-    """按扩展名 + magic bytes 判定上传类型：'image' / 'binary' / 'doc' / 'text'。
+    """按扩展名 + magic bytes 判定上传类型：'image' / 'binary' / 'doc' / 'mismatch' / 'text'。
 
     文本误杀防线：只认强 magic 与 NUL 字节，不用 "BM"/"RIFF" 这类
     与 ASCII 文本重叠的前缀（"BMW 开头的笔记" 不能被当二进制）。
+    doc 类型必须验 magic：假扩展名（文本改 .pdf/.pptx）会在拆页管线深处才炸。
     """
     ext = Path(filename).suffix.lower()
     if ext in IMAGE_EXTS:
         return "image"
     if ext in DOC_EXTS:
-        return "doc"
+        ok_pdf = head.startswith(b"%PDF-")
+        ok_pptx = head.startswith(b"PK\x03\x04")
+        if (ext == ".pdf" and ok_pdf) or (ext == ".pptx" and ok_pptx):
+            return "doc"
+        return "mismatch"
     if head.startswith(_IMAGE_MAGIC):
         return "image"
     if head.startswith(_BINARY_MAGIC) or b"\x00" in head:
@@ -153,6 +158,9 @@ async def upload_files(files: list[UploadFile] = File(...)):
         if kind in ("image", "binary"):
             reason = IMAGE_HINT if kind == "image" else "二进制文件暂不支持索引，已跳过"
             skipped.append(f"{safe} ({reason})")
+            continue
+        if kind == "mismatch":
+            skipped.append(f"{safe} (扩展名与内容不符——不是有效的 PDF/PPTX，已跳过)")
             continue
         batch.mkdir(parents=True, exist_ok=True)
         dest = batch / safe
@@ -263,6 +271,22 @@ def mm_ingest(req: MmIngestReq):
     p = Path(req.path)
     if p.suffix.lower() not in (".pdf", ".pptx") or not p.exists():
         raise HTTPException(422, "仅支持已上传的 pdf/pptx 文件")
+    head = p.open("rb").read(8)
+    if p.suffix.lower() == ".pdf" and not head.startswith(b"%PDF-"):
+        raise HTTPException(422, f"{p.name} 不是有效 PDF（文件头不符）")
+    if p.suffix.lower() == ".pptx" and not head.startswith(b"PK\x03\x04"):
+        raise HTTPException(422, f"{p.name} 不是有效 PPTX（文件头不符）")
+    # 廉价探开：魔数合法但内容损坏的文件当场拒绝（否则后台管线深处才炸）
+    try:
+        if p.suffix.lower() == ".pdf":
+            import pypdfium2 as pdfium
+            doc = pdfium.PdfDocument(str(p))
+            doc.close()
+        else:
+            import zipfile
+            zipfile.ZipFile(p).close()
+    except Exception as e:
+        raise HTTPException(422, f"{p.name} 无法解析（{type(e).__name__}: {e}）")
     pipeline.state.update(running=False, ok=None, file="", total=0, done=0,
                           log="")     # 清残留状态，前端轮询据此识别"未启动"
     pipeline.ingest_async(str(p), req.strategy)

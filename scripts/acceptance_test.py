@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
-REPO = Path(r"D:\AI Coding\vault-rag")
+REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 import requests

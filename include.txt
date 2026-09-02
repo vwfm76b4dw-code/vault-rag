@@ -39,3 +39,9 @@ AI数据标注与合成-2026-08-05/
 # ---- 扩展示例（取消注释即生效）----
 # @<可选其他外部文件> as external/xxx.md
 # D:\AI Coding\ai-dev-system\docs/    ← 不支持盘符目录，外部请用 @ 文件粒度
+@D:\AI Coding\vault-rag\data\uploads\20260902-223145\emoji🚀文件名📦.md as external/emoji🚀文件名📦.md
+@D:\AI Coding\vault-rag\data\uploads\20260902-223145\gbk编码笔记.txt as external/gbk编码笔记.txt
+@D:\AI Coding\vault-rag\data\uploads\20260902-223145\只有frontmatter.md as external/只有frontmatter.md
+@D:\AI Coding\vault-rag\data\uploads\20260902-223145\坏frontmatter.md as external/坏frontmatter.md
+@D:\AI Coding\vault-rag\data\uploads\20260902-223145\空文件.md as external/空文件.md
+@D:\AI Coding\vault-rag\data\uploads\20260902-223145\超长文件名很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很.md as external/超长文件名很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很很.md

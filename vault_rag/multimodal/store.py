@@ -202,8 +202,10 @@ def search(query_vec=None, query_text: str = "", top_k: int = 6) -> list[dict]:
     _rrf_merge(vec_hits, "image")
     _rrf_merge(fts_hits, "fts")
     ranked = sorted(meta.values(), key=lambda x: -rrf[x["id"]])
+    # 归一到 0~1（单路第 1 名 ≈0.5、双路第 1 名 =1.0），分数可读可比较
+    scale = 1.0 / (K + 1)
     for row in ranked:
-        row["score"] = round(rrf[row["id"]], 4)
+        row["score"] = round(min(1.0, rrf[row["id"]] / scale / 2), 4)
     return ranked[:top_k]
 
 
