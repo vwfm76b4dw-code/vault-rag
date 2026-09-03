@@ -503,6 +503,7 @@ def api_embed_hf_search(kw: str, mirror: bool = True):
     """LM Studio 式模型搜索：服务端请求 HF/mirror 检索 API（浏览器无 CORS 问题）。"""
     import requests as _rq
     base = "https://hf-mirror.com" if mirror else "https://huggingface.co"
+    kw = kw.replace("/", " ").strip()   # 粘贴完整仓库 id 时按关键词查（带 / 必然零匹配）
     try:
         params = {"search": kw, "filter": "gguf", "limit": 24,
                   "sort": "downloads", "direction": -1}

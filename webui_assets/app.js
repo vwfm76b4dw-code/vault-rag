@@ -311,6 +311,35 @@ $("btn-ep-save").addEventListener("click", async () => {
 $("btn-hf-search").addEventListener("click", hfSearch);
 $("hf-kw").addEventListener("keydown", (e) => { if (e.key === "Enter") hfSearch(); });
 
+async function hfFilesDirect(repo, box) {
+  /* 按仓库 id 直达文件列表；成功返回 true（失败不报错，交给调用方兜底） */
+  box.innerHTML = `<span class="empty">按仓库 id 拉取文件列表中…</span>`;
+  try {
+    const r = await api(`/api/embed/hf/files?repo=${encodeURIComponent(repo)}&mirror=${$("hf-mirror")?.checked !== false}`);
+    hfFiles = r.files || [];
+    renderHfFiles();
+    return true;
+  } catch (_) { return false; }
+}
+
+async function hfBrowse() {
+  /* 智能路由：像仓库 id（含 /）先直达，失败自动转关键词搜索；纯关键词直接搜 */
+  const v = $("hf-repo").value.trim();
+  const box = $("hf-files");
+  if (!v) return;
+  if (v.includes("/")) {
+    if (await hfFilesDirect(v, box)) return;
+    box.innerHTML = `<span class="empty">仓库 id 未命中（不存在/无 GGUF），自动转关键词搜索…</span>`;
+    $("hf-kw").value = v.split("/").pop() || v;   // 去掉所有者前缀，否则 HF 搜索必然零匹配
+  } else {
+    $("hf-kw").value = v;
+  }
+  await hfSearch();
+}
+
+$("btn-hf-list").addEventListener("click", hfBrowse);
+$("hf-repo").addEventListener("keydown", (e) => { if (e.key === "Enter") hfBrowse(); });
+
 async function loadHfFiles() {
   const box = $("hf-files");
   box.innerHTML = `<span class="empty">拉取中…</span>`;
@@ -320,16 +349,6 @@ async function loadHfFiles() {
     renderHfFiles();
   } catch (e) { box.innerHTML = `<span class="empty">✗ ${escapeHtml(e.message)}</span>`; }
 }
-
-$("btn-hf-list").addEventListener("click", async () => {
-  const box = $("hf-files");
-  box.innerHTML = `<span class="empty">拉取中…</span>`;
-  try {
-    const r = await api(`/api/embed/hf/files?repo=${encodeURIComponent($("hf-repo").value.trim())}&mirror=${$("hf-mirror").checked}`);
-    hfFiles = r.files || [];
-    renderHfFiles();
-  } catch (e) { box.innerHTML = `<span class="empty">✗ ${escapeHtml(e.message)}</span>`; }
-});
 
 
 /* ================= 通用 ================= */
