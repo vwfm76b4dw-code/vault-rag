@@ -83,8 +83,7 @@ def switch_to(name: str) -> dict:
     d = Path(entry["data_dir"])
     if not (d / "qwen_rag.db").exists():
         raise ValueError(f"该仓库数据目录缺少 qwen_rag.db: {d}")
-    # 范围声明全局共享（多仓库 = 多套索引产物，同一采集范围）
-    apply_data_dir(d)
+    apply_data_dir(d)   # include.txt 已随仓库目录独立（scope.include_path 动态解析）
     persist_pointer(d)
     return {"name": name, "data_dir": str(d)}
 

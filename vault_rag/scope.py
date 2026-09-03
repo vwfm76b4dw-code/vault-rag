@@ -16,8 +16,22 @@ from pathlib import Path
 
 from vault_rag.config import VAULT, BASE_DIR
 
-INCLUDE_PATH = Path(os.environ["RAG_INCLUDE"]) if os.getenv("RAG_INCLUDE") \
-    else BASE_DIR / "include.txt"
+
+def _static_include() -> Path:
+    return Path(os.environ["RAG_INCLUDE"]) if os.getenv("RAG_INCLUDE") \
+        else BASE_DIR / "include.txt"
+
+
+def include_path() -> Path:
+    """当前仓库的 include.txt（**每仓库独立**，强制跟随 DATA_DIR）。
+
+    RAG_INCLUDE 环境变量最高优先（覆盖一切）。
+    """
+    if os.getenv("RAG_INCLUDE"):
+        return _static_include()
+    from vault_rag.config import DATA_DIR
+    return DATA_DIR / "include.txt"
+
 
 Rule = tuple  # ("include"|"exclude", pred) / ("external", abs_path, alias)
 
@@ -26,21 +40,27 @@ _up_hash_cache: dict = {}      # (路径,mtime,size) → sha256,避免轮询反�
 
 
 def ensure_include_file() -> Path:
-    """include.txt 不存在时自举（打包态从随包模板复制，开发态仓库本就有）。"""
-    if INCLUDE_PATH.exists():
-        return INCLUDE_PATH
+    """include.txt 不存在时自举：优先复制根目录/随包模板（每仓库独立副本）。"""
+    path = include_path()
+    if path.exists():
+        return path
+    # 仓库目录缺声明 → 从根模板复制一份（新仓库立即拥有独立范围，不再"看似共用"）
+    root = BASE_DIR / "include.txt"
+    if not os.getenv("RAG_INCLUDE") and path != root and root.exists():
+        shutil.copy(root, path)
+        return path
     bundled = Path(getattr(sys, "_MEIPASS", "")) / "include.txt" \
         if getattr(sys, "frozen", False) else None
     if bundled and bundled.exists():
-        shutil.copy(bundled, INCLUDE_PATH)
+        shutil.copy(bundled, path)
     else:
-        INCLUDE_PATH.write_text(
+        path.write_text(
             "# vault-rag 索引范围声明（.gitignore 语法）\n"
             "#   目录规则 'dir/' | 文件 'path/to.md' | 通配 '*.md'（仅根级，跨目录用 '**'）\n"
             "#   '!排除' | '@绝对路径 as external/别名.md'（vault 外部文件）\n\n"
             "知识/\n项目/\n研究/\n笔记/\n记忆/\n错题/\n*.md\n",
             encoding="utf-8")
-    return INCLUDE_PATH
+    return path
 
 
 def _glob_to_rx(pat: str) -> str:
@@ -67,7 +87,7 @@ def _glob_to_rx(pat: str) -> str:
 def parse_rules(text: str | None = None) -> list[Rule]:
     if text is None:
         ensure_include_file()
-    text = (Path(INCLUDE_PATH).read_text(encoding="utf-8")) if text is None else text
+    text = ensure_include_file().read_text(encoding="utf-8") if text is None else text
     rules: list[Rule] = []
     for raw in text.splitlines():
         line = raw.strip()

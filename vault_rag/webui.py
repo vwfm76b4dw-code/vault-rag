@@ -483,10 +483,19 @@ class GgufSelectReq(BaseModel):
 @app.post("/api/embed/gguf/select")
 def api_embed_gguf_select(req: GgufSelectReq):
     from vault_rag import embed_providers
-    if not (embed_providers.GGUF_DIR / req.file).exists():
+    gguf_path = embed_providers.GGUF_DIR / req.file
+    if not gguf_path.exists():
         raise HTTPException(404, f"文件不存在: {req.file}")
     lib.save_local_settings({"llama_gguf": req.file})
-    return {"ok": True, "active": req.file}
+    # 关键：终止按旧模型启动的托管 llama-server——否则 server_alive() 一直复用
+    # 旧进程，"切换模型"永不生效（下次检索时按新模型自动重启）
+    embed_providers.stop_server()
+    warning = embed_providers.gguf_visual_warning(gguf_path)
+    return {"ok": True, "active": req.file,
+            "restarted": True,
+            "warning": warning,
+            "message": "已切换（旧嵌入服务已停止，下次检索按新模型自动重启）"
+                       + ("；" + warning if warning else "")}
 
 
 @app.get("/api/embed/hf/files")

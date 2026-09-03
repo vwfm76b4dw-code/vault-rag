@@ -526,7 +526,7 @@ def save_scope_text(text: str) -> list[str]:
     errors = validate_scope_text(text)
     if errors:
         return errors
-    scopes.INCLUDE_PATH.write_text(text, encoding="utf-8")
+    scopes.include_path().write_text(text, encoding="utf-8")
     return []
 
 
@@ -542,7 +542,7 @@ def add_external_file(path: str, alias: str | None = None) -> tuple[bool, str]:
         return False, "该文件已在范围内"
     line = f"@{p}" + (f" as {name}" if alias else "")
     sep = "" if text.endswith("\n") else "\n"
-    scopes.INCLUDE_PATH.write_text(text + sep + line + "\n", encoding="utf-8")
+    scopes.include_path().write_text(text + sep + line + "\n", encoding="utf-8")
     return True, name
 
 

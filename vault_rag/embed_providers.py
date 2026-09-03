@@ -150,6 +150,66 @@ def stop_server():
     if _SERVER["proc"] is not None and _SERVER["proc"].poll() is None:
         _SERVER["proc"].terminate()
     _SERVER["proc"] = None
+    _llama_cache.clear()          # 换模型后旧向量必须作废（查询侧进程内缓存）
+
+
+def gguf_arch(path) -> str | None:
+    """读 GGUF 头部的 general.architecture（不依赖第三方库；失败返回 None）。"""
+    try:
+        import struct
+        with open(path, "rb") as f:
+            magic = f.read(4)
+            if magic != b"GGUF":
+                return None
+            ver, n_tensors, n_kv = struct.unpack("<IQQ", f.read(20))
+            if ver < 2:
+                return None
+
+            def _rd_str():
+                n = struct.unpack("<Q", f.read(8))[0]
+                return f.read(n).decode("utf-8", "replace")
+
+            def _rd_val(vt):
+                if vt == 8:
+                    return _rd_str()
+                if vt == 4:
+                    return struct.unpack("<I", f.read(4))[0]
+                if vt == 5:
+                    return struct.unpack("<i", f.read(4))[0]
+                if vt == 6:
+                    return struct.unpack("<f", f.read(4))[0]
+                if vt == 7:
+                    return struct.unpack("<B", f.read(1))[0]
+                if vt == 10:
+                    return struct.unpack("<Q", f.read(8))[0]
+                if vt == 9:
+                    return struct.unpack("<q", f.read(8))[0]
+                if vt == 0:
+                    return struct.unpack("<B", f.read(1))[0]
+                return None  # 数组等复杂类型跳过（当前键序用不到）
+
+            for _ in range(min(n_kv, 64)):
+                key = _rd_str()
+                vt = struct.unpack("<I", f.read(4))[0]
+                val = _rd_val(vt)
+                if key == "general.architecture":
+                    return str(val)
+        return None
+    except Exception:
+        return None
+
+
+VISUAL_ARCH_MARKERS = ("vl", "vision", "mmproj", "clip")
+
+
+def gguf_visual_warning(path) -> str:
+    """视觉模型 GGUF 选择提示（llama-server 文本嵌入未支持视觉塔）。"""
+    arch = gguf_arch(path) or ""
+    if any(m in arch.lower() for m in VISUAL_ARCH_MARKERS):
+        return (f"该 GGUF 架构为 {arch}（含视觉塔）——llama-server 的文本嵌入接口"
+                f"大概率不支持，切换后检索会失败。VL 视觉索引请走本地 torch 路径"
+                f"（多模态管线已内置）。")
+    return ""
 
 
 import atexit

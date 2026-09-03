@@ -116,7 +116,11 @@ async function renderEmbed() {
       `<span class="p-tag muted">${f.size_mb} MB</span>` +
       (active ? `<span class="p-tag">● 使用中</span>` : ``);
     row.addEventListener("click", async () => {
-      await post("/api/embed/gguf/select", { file: f.file });
+      try {
+        const r = await post("/api/embed/gguf/select", { file: f.file });
+        if (r.warning) alert(r.warning);
+        else alert(`✓ 已切换为 ${f.file}\n嵌入服务已重启，下次检索按新模型生效`);
+      } catch (e) { alert("切换失败: " + e.message); }
       renderEmbed();
     });
     g.appendChild(row);
