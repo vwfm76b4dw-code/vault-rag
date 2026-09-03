@@ -167,16 +167,35 @@ def hf_base(mirror: bool) -> str:
 
 
 def hf_list_files(repo: str, mirror: bool = True, timeout: float = 20) -> list[dict]:
-    """列出仓库内 GGUF 文件（走 HF API，镜像同路径）。"""
+    """列出仓库内 GGUF 文件（走 HF API，镜像同路径）。
+
+    错误人性化：HF 对「不存在/私有」仓库统一返回 401（防枚举），
+    原样透传会让用户以为是鉴权问题。
+    """
     import requests
     base = hf_base(mirror)
     r = requests.get(f"{base}/api/models/{repo}/tree/main", timeout=timeout)
+    if r.status_code in (401, 403, 404):
+        hint = ""
+        low = repo.lower()
+        if "vl-embedding-2b-fp8" in low or "vl-embedding-2b-awq" in low:
+            hint = ("提示：Qwen3-VL-Embedding-2B 的 FP8/AWQ 是 transformers 权重仓库"
+                    "（safetensors，无 GGUF），供本地 torch 路径使用（本机已内置）；"
+                    "GGUF 版社区仓库如 jfiekdjdk/Qwen3-VL-Embedding-2B-Q8_0-GGUF，"
+                    "但 llama-server 对视觉嵌入的支持未经验证。")
+        raise RuntimeError(
+            f"仓库「{repo}」不存在或未公开（HF 对不存在/私有仓库统一返回 401）。"
+            f"请检查仓库 id 拼写，或用关键词搜索。{hint}")
     r.raise_for_status()
     out = []
     for it in r.json():
         name = it.get("path", "")
         if name.lower().endswith(".gguf"):
             out.append({"file": name, "size_mb": round(it.get("size", 0) / 1e6)})
+    if not out:
+        raise RuntimeError(
+            f"仓库「{repo}」里没有 GGUF 文件——它可能是 transformers/safetensors 权重仓库，"
+            f"不适用于内置 llama.cpp（GGUF 下载器）。")
     return out
 
 

@@ -504,13 +504,19 @@ def api_embed_hf_search(kw: str, mirror: bool = True):
     import requests as _rq
     base = "https://hf-mirror.com" if mirror else "https://huggingface.co"
     try:
-        r = _rq.get(f"{base}/api/models",
-                    params={"search": kw, "filter": "gguf", "limit": 24,
-                            "sort": "downloads", "direction": -1},
-                    timeout=20)
+        params = {"search": kw, "filter": "gguf", "limit": 24,
+                  "sort": "downloads", "direction": -1}
+        r = _rq.get(f"{base}/api/models", params=params, timeout=20)
         r.raise_for_status()
         repos = [{"id": m.get("id", ""), "downloads": m.get("downloads", 0),
                   "likes": m.get("likes", 0)} for m in r.json()]
+        if not repos:
+            # 部分仓库没打 gguf 标签（如 transformers 权重仓库）——去过滤重试
+            params.pop("filter")
+            r = _rq.get(f"{base}/api/models", params=params, timeout=20)
+            r.raise_for_status()
+            repos = [{"id": m.get("id", ""), "downloads": m.get("downloads", 0),
+                      "likes": m.get("likes", 0)} for m in r.json()]
         return {"ok": True, "repos": repos}
     except Exception as e:
         raise HTTPException(502, f"搜索失败: {e}")
