@@ -78,8 +78,15 @@ def _is_local_url(url: str) -> bool:
 
 
 def chat_profiles() -> list[dict]:
-    custom = load_local_settings().get("chat_profiles") or []
-    return [dict(p) for p in PROVIDER_PRESETS] + [dict(c) for c in custom]
+    """预设 + 自定义档案；同名自定义**覆盖**预设（否则用户给预设存的 key
+    被排在前面的无 key 预设遮蔽——UI 显示没存上，实际却在生效）。"""
+    custom = {c["name"]: dict(c)
+              for c in (load_local_settings().get("chat_profiles") or [])}
+    out = []
+    for p in PROVIDER_PRESETS:
+        out.append(custom.pop(p["name"], None) or dict(p))
+    out.extend(custom.values())
+    return out
 
 
 def _provider_key(prof: dict) -> str:

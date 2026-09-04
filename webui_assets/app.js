@@ -46,9 +46,20 @@ async function renderProviders() {
       `<div class="p-body"><div class="p-name">${escapeHtml(p.name)}</div>` +
       `<div class="p-sub">${escapeHtml(p.url)} · ${escapeHtml(p.model)}</div></div>` +
       (p.key ? `<span class="p-tag muted" title="档案自带 key">🔑</span>` : ``) +
+      `<span class="p-tag linklike" data-p-key title="设置/更改该档案专用 key">Key</span>` +
       (active ? `<span class="p-tag">● 使用中</span>`
               : `<span class="p-tag muted">切换</span>`) +
       (p.custom ? `<button class="p-del" title="删除该档案">✕</button>` : ``);
+    row.querySelector("[data-p-key]").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const k = prompt(`为「${p.name}」设置专用 Key（当前${p.key ? "已配置" : "未配置"}；留空取消）：`);
+      if (!k) return;
+      try {
+        await post("/api/providers", { name: p.name, key: k });
+        setMsgAuto("np-msg", `✓ Key 已保存并生效（${p.name}）`, true);
+        renderProviders(); refreshStatus();
+      } catch (err) { alert(err.message); }
+    });
     row.addEventListener("click", async (e) => {
       if (e.target.classList.contains("p-del")) return;
       try { await post("/api/providers", { name: p.name }); renderProviders(); refreshStatus(); }
