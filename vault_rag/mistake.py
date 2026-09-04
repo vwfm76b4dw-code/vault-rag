@@ -21,13 +21,20 @@ class MistakeError(Exception):
     """视觉识别/笔记生成失败（信息面向最终用户展示）。"""
 
 
-VISION_PROMPT = """你是错题整理助手。识别图片中的题目（可能是拍照的试卷/练习，含手写作答），只输出严格 JSON（不要 markdown 代码块以外的任何文字）：
+VISION_PROMPT = """你是错题整理助手。识别图片中的题目（可能是拍照的试卷/练习，含手写作答）；若图中有多道题，只取第一道完整题目。只输出严格 JSON（不要 markdown 代码块以外的任何文字）：
 {"subject": "学科", "topic_tags": ["标签"], "question": "题干完整转写（数学式用 $...$）", "my_answer": "图中学生的作答，未作答则为空字符串", "correct_answer": "正确答案", "error_reason": "错因分析（若未作答则写未作答的原因推测）", "knowledge_points": ["涉及知识点"], "solution": "完整正确解法步骤"}
-如果图片不是题目（风景/截图/人物等），输出：{"not_mistake": true, "description": "图片内容简述"}"""
+如果图片是教材/教辅的【阅读页、知识梳理页、课文页】——即没有可供批改的学生作答——也视为不是题目，输出：{"not_mistake": true, "description": "教材阅读页（无学生作答）"}。区分标准：有明确的题目+可判定的作答=错题；纯知识梳理/课文/规划建议=非题目。"""
+
+
+def _json_repair(t: str) -> str:
+    """常见视觉 JSON 病灶的保守修复：尾逗号、字符串内裸换行。"""
+    t = re.sub(r",\s*([}\]])", r"\1", t)                       # 尾逗号
+    t = re.sub(r'(:\s*"[^"\n]*)\n([^"\n]*")', r"\1\\n\2", t)   # 串内裸换行 → \n
+    return t
 
 
 def parse_vision_json(text: str) -> dict:
-    """解析视觉模型输出：剥代码围栏、取第一个 JSON 对象。"""
+    """解析视觉模型输出：剥代码围栏、取第一个 JSON 对象，失败做保守修复重试。"""
     t = text.strip()
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", t, re.S)
     if m:
@@ -38,8 +45,11 @@ def parse_vision_json(text: str) -> dict:
             t = m.group(0)
     try:
         data = json.loads(t)
-    except json.JSONDecodeError as e:
-        raise MistakeError(f"视觉模型输出不是合法 JSON：{e}") from e
+    except json.JSONDecodeError:
+        try:
+            data = json.loads(_json_repair(t))
+        except json.JSONDecodeError as e:
+            raise MistakeError(f"视觉模型输出不是合法 JSON：{e}") from e
     if not isinstance(data, dict):
         raise MistakeError("视觉模型输出结构异常")
     return data
@@ -137,9 +147,27 @@ def ingest(image_bytes: bytes, source_name: str, vision_fn=None,
     """图片 → 视觉识别 → 错题笔记。vision_fn(prompt, image_bytes) -> str 可注入测试。"""
     if vision_fn is None:
         from vault_rag import webui_lib as lib
-        vision_fn = lib.vision_chat
-    raw = vision_fn(VISION_PROMPT, image_bytes)
-    data = parse_vision_json(raw)
+        vision_fn = lambda pr, im: lib.vision_chat(pr, im, temperature=0.0)  # 判定要确定性的
+
+    def _call_with_retry(prompt: str, tries: int = 3) -> str:
+        """瞬时网络/网关错误（502/超时）指数退避重试；解析错误不在此层重试。"""
+        last = None
+        for i in range(tries):
+            try:
+                return vision_fn(prompt, image_bytes)
+            except Exception as e:            # ChatUnavailable / 网络层
+                last = e
+                if i < tries - 1:
+                    time.sleep(3 * (i + 1))
+        raise last
+
+    raw = _call_with_retry(VISION_PROMPT)
+    try:
+        data = parse_vision_json(raw)
+    except MistakeError:
+        # 一次性纠正重试：把坏输出喂回去要求修成合法 JSON（成本 1 次调用，救回整题）
+        fixed = vision_fn("以下 JSON 不合法，请修正为严格合法 JSON 后只输出 JSON：\n" + raw[:2000])
+        data = parse_vision_json(fixed)
     if any(k in data for k in _NOT_MISTAKE_KEYS):
         desc = data.get("description") or "非题目内容"
         raise MistakeError(f"图片不是题目（识别为：{desc}），未入库")
