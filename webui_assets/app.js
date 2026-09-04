@@ -252,6 +252,16 @@ $("btn-pref-save").addEventListener("click", async () => {
   } catch (e) { setMsg("pref-msg", e.message, false); }
 });
 
+/* 应用线程（独立按钮——此前从未绑定事件，点了没反应） */
+$("btn-threads-save").addEventListener("click", async () => {
+  const v = parseInt($("pref-threads").value, 10);
+  if (!v || v < 1 || v > 32) { setMsg("threads-msg", "线程数需为 1~32", false); return; }
+  try {
+    await post("/api/prefs", { threads: v });
+    setMsgAuto("threads-msg", "✓ 已应用（索引/检索编码生效）", true);
+  } catch (e) { setMsg("threads-msg", e.message, false); }
+});
+
 function openModelsGen() { nav("models-gen"); }
 
 /* 新增/修改生成档案 */

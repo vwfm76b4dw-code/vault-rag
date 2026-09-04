@@ -310,11 +310,15 @@ def mm_strategy_get():
             "options": list(pipeline.STRATEGIES)}
 
 
+class MmStrategyReq(BaseModel):
+    strategy: str
+
+
 @router.post("/mm/strategy")
-def mm_strategy_set(req: MmIngestReq):
+def mm_strategy_set(req: MmStrategyReq):
     from vault_rag.multimodal import pipeline
     try:
-        pipeline.set_strategy(req.strategy or "balanced")
+        pipeline.set_strategy(req.strategy)
     except ValueError as e:
         raise HTTPException(422, str(e))
     return {"ok": True, "strategy": req.strategy}
