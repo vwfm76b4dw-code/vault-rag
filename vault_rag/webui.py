@@ -177,13 +177,12 @@ def api_chat(req: ChatReq):
 # 检索自动注入，问答页只是这条端点的调试台。
 
 def _backend_key() -> str:
-    """问答后端鉴权 key：首用自动生成并持久化（设置页可见）。"""
-    s = lib.load_local_settings()
-    k = s.get("backend_key")
+    """问答后端鉴权 key：首用自动生成并持久化（全局层，跨仓库共享）。"""
+    k = lib.load_global_settings().get("backend_key")
     if not k:
         import uuid as _uuid
         k = "vrk-" + _uuid.uuid4().hex
-        lib.save_local_settings({"backend_key": k})
+        lib.save_global_settings({"backend_key": k})
     return k
 
 

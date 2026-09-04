@@ -40,3 +40,4 @@ dist/
 # 内置 llama.cpp 官方预编译（本地资产，不入库）
 llama/
 data/gguf/
+/_global_settings.json

@@ -376,9 +376,12 @@ class TestV1Backend(unittest.TestCase):
         self._lib = lib
         self._orig = {n: lib.__dict__.get(n) for n in
                       ("retrieve", "keyword_fallback", "stream_chat",
-                       "load_local_settings", "save_local_settings")}
+                       "load_local_settings", "save_local_settings",
+                       "load_global_settings", "save_global_settings")}
         lib.load_local_settings = lambda: {"backend_key": "test-key-123"}
         lib.save_local_settings = lambda patch: None
+        lib.load_global_settings = lambda: {"backend_key": "test-key-123"}
+        lib.save_global_settings = lambda patch: None
         lib.retrieve = lambda q, top_k=6: list(self.HITS)[:top_k]
         lib.keyword_fallback = lambda q, top_k=6: list(self.HITS)[:top_k]
         seen = {"messages": None}

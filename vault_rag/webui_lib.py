@@ -19,9 +19,42 @@ import requests
 from vault_rag.config import (CHAT_API_KEY_ENVS, CHAT_API_URL, CHAT_MODEL, CHAT_TIMEOUT,
                     DB_PATH, DATA_DIR, FTS_DB, LOCAL_SETTINGS_PATH, RELATIONS_DB,
                     VAULT, WEIGHTS_DB)
+from vault_rag.config import BASE_DIR
 from vault_rag import scope as scopes
 
 # ---------- 本地设置（key 等敏感项，gitignored） ----------
+#
+# 两层设计（2026-09-04）：
+#   仓库层 LOCAL_SETTINGS_PATH  —— per-repo 偏好（embed/provider 偏好/llama_gguf/prefs）
+#   全局层 GLOBAL_SETTINGS_PATH —— 跨仓库共享的凭据与档案：
+#     agnes_key / chat_profiles / backend_key（换了仓库 Key 和供应商档案必须还在）
+GLOBAL_SETTINGS_PATH = BASE_DIR / "_global_settings.json"
+_GLOBAL_KEYS = ("agnes_key", "chat_profiles", "backend_key")
+
+
+def _read_json(p) -> dict:
+    try:
+        return json.loads(Path(p).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def load_global_settings() -> dict:
+    g = _read_json(GLOBAL_SETTINGS_PATH)
+    if not g:
+        # 一次性迁移：从既有仓库设置里接管全局项（老用户无感）
+        repo = _read_json(LOCAL_SETTINGS_PATH)
+        g = {k: repo[k] for k in _GLOBAL_KEYS if k in repo}
+        if g:
+            save_global_settings(g)
+    return g
+
+
+def save_global_settings(patch: dict) -> None:
+    merged = {**load_global_settings(), **{k: v for k, v in patch.items() if v is not None}}
+    GLOBAL_SETTINGS_PATH.write_text(json.dumps(merged, ensure_ascii=False, indent=2),
+                                    encoding="utf-8")
+
 
 def load_local_settings() -> dict:
     try:
@@ -42,7 +75,10 @@ def chat_api_key() -> str:
         v = os.environ.get(env)
         if v:
             return v
-    return str(load_local_settings().get("agnes_key") or "")
+    repo_key = str(load_local_settings().get("agnes_key") or "")
+    if repo_key:
+        return repo_key
+    return str(load_global_settings().get("agnes_key") or "")   # 跨仓库共享 key
 
 
 # ---------- 供应商档案（cc-switch 式：预设 + 自定义增删改）----------
@@ -81,7 +117,7 @@ def chat_profiles() -> list[dict]:
     """预设 + 自定义档案；同名自定义**覆盖**预设（否则用户给预设存的 key
     被排在前面的无 key 预设遮蔽——UI 显示没存上，实际却在生效）。"""
     custom = {c["name"]: dict(c)
-              for c in (load_local_settings().get("chat_profiles") or [])}
+              for c in (load_global_settings().get("chat_profiles") or [])}
     out = []
     for p in PROVIDER_PRESETS:
         out.append(custom.pop(p["name"], None) or dict(p))
@@ -127,10 +163,10 @@ def switch_provider(name: str | None = None, url: str | None = None,
         prof = {"name": name or "自定义", "url": url, "model": model or "", "custom": True}
         if key:
             prof["key"] = key
-        s = load_local_settings()
-        profiles = [p for p in (s.get("chat_profiles") or []) if p.get("name") != prof["name"]]
+        profiles = [p for p in (load_global_settings().get("chat_profiles") or [])
+                    if p.get("name") != prof["name"]]
         profiles.append(prof)
-        save_local_settings({"chat_profiles": profiles})
+        save_global_settings({"chat_profiles": profiles})
         save_local_settings({"provider": {"name": prof["name"], "url": prof["url"],
                                           "model": prof["model"]}})
         return prof
@@ -140,11 +176,11 @@ def switch_provider(name: str | None = None, url: str | None = None,
     if prof is None:
         raise ValueError(f"未知供应商: {name}")
     if key is not None:                       # 给预设档案也存独立 key
-        s = load_local_settings()
-        profiles = [p for p in (s.get("chat_profiles") or []) if p.get("name") != name]
+        profiles = [p for p in (load_global_settings().get("chat_profiles") or [])
+                    if p.get("name") != name]
         profiles.append({"name": name, "url": prof["url"], "model": prof["model"],
                          "key": key, "custom": True})
-        save_local_settings({"chat_profiles": profiles})
+        save_global_settings({"chat_profiles": profiles})
         prof = next(p for p in chat_profiles() if p["name"] == name)
     save_local_settings({"provider": {"name": prof["name"], "url": prof["url"],
                                       "model": prof["model"]}})
@@ -153,11 +189,11 @@ def switch_provider(name: str | None = None, url: str | None = None,
 
 def delete_provider(name: str) -> dict:
     """仅自定义档案可删；删当前生效的则回落默认。"""
-    s = load_local_settings()
-    profiles = [p for p in (s.get("chat_profiles") or []) if p.get("name") != name]
-    if len(profiles) == len(s.get("chat_profiles") or []):
+    g = load_global_settings()
+    profiles = [p for p in (g.get("chat_profiles") or []) if p.get("name") != name]
+    if len(profiles) == len(g.get("chat_profiles") or []):
         raise ValueError(f"预设档案不可删除: {name}")
-    save_local_settings({"chat_profiles": profiles})
+    save_global_settings({"chat_profiles": profiles})
     if (s.get("provider") or {}).get("name") == name:
         save_local_settings({"provider": dict(PROVIDER_PRESETS[0])})
     return {"deleted": name}
