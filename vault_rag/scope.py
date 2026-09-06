@@ -23,14 +23,21 @@ def _static_include() -> Path:
 
 
 def include_path() -> Path:
-    """当前仓库的 include.txt（**每仓库独立**，强制跟随 DATA_DIR）。
+    """include.txt 全局共享（2026-09-05 定稿）：**一份声明，所有仓库同一采集范围**。
 
-    RAG_INCLUDE 环境变量最高优先（覆盖一切）。
+    多仓库 = 多套索引产物，同一采集范围（repos.py 原始设计意图）。
+    RAG_INCLUDE 环境变量最高优先。
     """
     if os.getenv("RAG_INCLUDE"):
         return _static_include()
-    from vault_rag.config import DATA_DIR
-    return DATA_DIR / "include.txt"
+    return BASE_DIR / "include.txt"
+
+
+def __getattr__(name: str):
+    """外部 `scope.INCLUDE_PATH` 兼容入口 → include_path()（动态）。"""
+    if name == "INCLUDE_PATH":
+        return include_path()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 Rule = tuple  # ("include"|"exclude", pred) / ("external", abs_path, alias)
@@ -40,14 +47,9 @@ _up_hash_cache: dict = {}      # (路径,mtime,size) → sha256,避免轮询反�
 
 
 def ensure_include_file() -> Path:
-    """include.txt 不存在时自举：优先复制根目录/随包模板（每仓库独立副本）。"""
+    """include.txt 不存在时自举（开发态仓库本就有；打包态从随包模板复制）。"""
     path = include_path()
     if path.exists():
-        return path
-    # 仓库目录缺声明 → 从根模板复制一份（新仓库立即拥有独立范围，不再"看似共用"）
-    root = BASE_DIR / "include.txt"
-    if not os.getenv("RAG_INCLUDE") and path != root and root.exists():
-        shutil.copy(root, path)
         return path
     bundled = Path(getattr(sys, "_MEIPASS", "")) / "include.txt" \
         if getattr(sys, "frozen", False) else None

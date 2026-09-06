@@ -857,54 +857,69 @@ class TestGgufArchSniff(unittest.TestCase):
             self.assertIsNone(ep.gguf_arch(fp))
 
 
-class TestPerRepoInclude(unittest.TestCase):
-    """每仓库独立 include.txt（用户实测 bug：新库共用同一份声明）。"""
+class TestSharedInclude(unittest.TestCase):
+    """include.txt 全局共享（2026-09-05 定稿）：一份声明，所有仓库同一采集范围。"""
 
-    def test_include_follows_data_dir(self):
-        import shutil
+    def test_include_shared_across_repos(self):
         from vault_rag import config, repos, scope
         orig = (config.DATA_DIR, scope.include_path)
-        with tempfile.TemporaryDirectory() as td:
-            td = Path(td)
-            other = td / "repo-B"; other.mkdir()
-            (other / "include.txt").write_text("# 仓库B专用\n笔记/\n", encoding="utf-8")
-            try:
-                repos.apply_data_dir(other)
-                self.assertEqual(scope.include_path(), other / "include.txt")
-                self.assertIn("仓库B专用", scope.ensure_include_file().read_text(encoding="utf-8"))
-                # 缺声明的新仓库 → 自举副本（不再回退共享根文件）
-                fresh = td / "repo-C"; fresh.mkdir()
-                repos.apply_data_dir(fresh)
-                inc = scope.ensure_include_file()
-                self.assertEqual(inc, fresh / "include.txt")
-                self.assertTrue(inc.exists())
-                self.assertIn("vault-rag 索引范围声明", inc.read_text(encoding="utf-8"))
-            finally:
-                config.DATA_DIR = orig[0]
-                scope.include_path = orig[1]
+        try:
+            p1 = scope.include_path()
+            repos.apply_data_dir(config.DATA_DIR / "repo-测试")
+            p2 = scope.include_path()
+            self.assertEqual(p1, p2)                     # 切仓库不换声明文件
+            repos.apply_data_dir(config.DATA_DIR)
+            self.assertEqual(scope.include_path(), p1)
+        finally:
+            config.DATA_DIR = orig[0]
+            scope.include_path = orig[1]
 
-    def test_switch_isolation(self):
-        """主/测试仓库的 include 内容互不串扰。"""
-        import shutil
+    def test_same_content_seen_by_all(self):
         from vault_rag import config, repos, scope
         orig = (config.DATA_DIR, scope.include_path)
+        try:
+            text = scope.ensure_include_file().read_text(encoding="utf-8")
+            repos.apply_data_dir(config.DATA_DIR / "repo-测试")
+            self.assertEqual(scope.ensure_include_file().read_text(encoding="utf-8"), text)
+        finally:
+            config.DATA_DIR = orig[0]
+            scope.include_path = orig[1]
+
+
+class TestGgufArchSniff(unittest.TestCase):
+    """GGUF 架构嗅探：视觉模型选择警告（合成头部，无需真实模型）。"""
+
+    @staticmethod
+    def _fake_gguf(path, arch):
+        import struct
+        kv = [("general.architecture", arch)]
+        with open(path, "wb") as f:
+            f.write(b"GGUF")
+            f.write(struct.pack("<IQQ", 3, 0, len(kv)))
+            for k, v in kv:
+                kb = k.encode()
+                f.write(struct.pack("<Q", len(kb)) + kb)
+                f.write(struct.pack("<I", 8))
+                vb = v.encode()
+                f.write(struct.pack("<Q", len(vb)) + vb)
+
+    def test_visual_arch_warns(self):
+        from vault_rag import embed_providers as ep
         with tempfile.TemporaryDirectory() as td:
-            td = Path(td)
-            ra, rb = td / "A", td / "B"
-            for d, tag in ((ra, "A范围"), (rb, "B范围")):
-                d.mkdir()
-                (d / "include.txt").write_text(f"# {tag}\n", encoding="utf-8")
-            try:
-                repos.apply_data_dir(ra)
-                self.assertIn("A范围", scope.read_scope_text() if hasattr(scope, "read_scope_text")
-                              else scope.ensure_include_file().read_text(encoding="utf-8"))
-                repos.apply_data_dir(rb)
-                text = (scope.ensure_include_file().read_text(encoding="utf-8"))
-                self.assertIn("B范围", text)
-                self.assertNotIn("A范围", text)
-            finally:
-                config.DATA_DIR = orig[0]
-                scope.include_path = orig[1]
+            fp = Path(td) / "m.gguf"
+            self._fake_gguf(fp, "qwen3vl")
+            self.assertEqual(ep.gguf_arch(fp), "qwen3vl")
+            self.assertIn("视觉塔", ep.gguf_visual_warning(fp))
+            self._fake_gguf(fp, "qwen3")
+            self.assertEqual(ep.gguf_arch(fp), "qwen3")
+            self.assertEqual(ep.gguf_visual_warning(fp), "")
+
+    def test_garbage_returns_none(self):
+        from vault_rag import embed_providers as ep
+        with tempfile.TemporaryDirectory() as td:
+            fp = Path(td) / "x.gguf"
+            fp.write_bytes(b"not a gguf at all")
+            self.assertIsNone(ep.gguf_arch(fp))
 
 
 if __name__ == "__main__":
