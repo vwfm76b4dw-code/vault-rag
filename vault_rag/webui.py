@@ -61,7 +61,8 @@ def _sse(obj: dict) -> str:
 
 @app.get("/")
 def index():
-    return FileResponse(ASSETS / "index.html")
+    # no-cache：WebView2 会启发式缓存 HTML 文档，重建 exe 后窗口仍渲染旧版
+    return FileResponse(ASSETS / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/status")
