@@ -55,6 +55,7 @@ def list_ggufs() -> list[dict]:
     out = []
     for p in sorted(GGUF_DIR.glob("*.gguf"), key=lambda x: -x.stat().st_mtime):
         out.append({"file": p.name, "is_mmproj": "mmproj" in p.name.lower(),
+                    "is_visual": gguf_is_visual(p),
                     "arch": gguf_arch(p), "size_mb": round(p.stat().st_size / 1e6)})
     return out
 
@@ -111,10 +112,45 @@ def server_alive(timeout: float = 1.5) -> bool:
         return False
 
 
-def ensure_server(start_timeout: float = 90.0) -> int:
-    """确保内置 llama-server 在跑（模型就绪），返回端口。"""
+def _served_model_matches(gguf: Path) -> bool:
+    """端口上的 llama-server 是否正加载配置指定的模型（/v1/models 读回启动模型路径）。
+
+    读不到（端点异常/老版本无此路由）时保守返回 True，避免误杀健康服务。
+    """
+    try:
+        import requests
+        r = requests.get(f"http://127.0.0.1:{LLAMA_PORT}/v1/models", timeout=2)
+        served = ((r.json().get("models") or [{}])[0].get("model") or "")
+    except Exception:
+        return True
+    try:
+        return Path(served).resolve() == gguf.resolve()
+    except Exception:
+        return Path(served).name == gguf.name
+
+
+def _server_log_tail(n: int = 400) -> str:
+    """llama_server.log 末段——启动失败时直接附进异常消息，用户不用翻日志文件。"""
+    try:
+        return (GGUF_DIR / "llama_server.log").read_text(encoding="utf-8", errors="replace")[-n:]
+    except Exception:
+        return ""
+
+
+def ensure_server(start_timeout: float = 240.0) -> int:
+    """确保内置 llama-server 在跑（模型就绪），返回端口。
+
+    默认 240s：实测 VL 1.8G + mmproj 800M 冷加载 ~100s，90s 会超时误报。
+    """
     if server_alive():
-        return LLAMA_PORT
+        # 探活命中还不够：端口上的活服务可能是其它实例/历史遗留按旧模型起的
+        # 孤儿进程（实测事故：父进程已死，stop_server 永远杀不到，"切换模型"
+        # 看似成功实则永远用旧模型）。服务模型与配置不符时必须清场重启。
+        gguf_now = resolve_gguf()
+        if gguf_now is None or _served_model_matches(gguf_now):
+            return LLAMA_PORT
+        stop_server()
+        time.sleep(0.5)
     if _SERVER["proc"] is not None and _SERVER["proc"].poll() is None:
         # 我们起的进程还在但没就绪 → 等健康
         t0 = time.time()
@@ -122,7 +158,7 @@ def ensure_server(start_timeout: float = 90.0) -> int:
             if server_alive():
                 return LLAMA_PORT
             time.sleep(1)
-        raise RuntimeError("llama-server 启动超时（模型加载未完成）")
+        raise RuntimeError("llama-server 启动超时（模型加载未完成）——日志末段：" + _server_log_tail())
 
     exe, gguf = resolve_llama_exe(), resolve_gguf()
     if not exe or not gguf:
@@ -135,8 +171,13 @@ def ensure_server(start_timeout: float = 90.0) -> int:
     cmd = [str(exe), "-m", str(gguf), "--embedding", "--pooling", "last",
            "--host", "127.0.0.1", "--port", str(LLAMA_PORT)]
     # --pooling last：部分 GGUF（如 VL 系）元数据未声明 pooling，/v1/embeddings 会 400
-    mmproj = load_local_settings().get("llama_mmproj")
-    if mmproj and (GGUF_DIR / mmproj).exists():
+    # 493c92d 曾在此裸调用 load_local_settings() → NameError，凡需真正重启服务的
+    # 场景（换模型/服务掉线）必崩，检索静默降级关键词——必须走 webui_lib 前缀
+    from vault_rag import webui_lib
+    mmproj = webui_lib.load_local_settings().get("llama_mmproj")
+    # 配置里可能残留与主模型错配的 mmproj（实测 0.6B 挂 VL 投影必然加载失败）——
+    # 非视觉主模型一律忽略该配置，防止启动即崩
+    if mmproj and gguf_is_visual(gguf) and (GGUF_DIR / mmproj).exists():
         cmd += ["--mmproj", str(GGUF_DIR / mmproj)]   # 视觉投影（用户配置）
     proc = subprocess.Popen(
         cmd, stdout=log, stderr=log, creationflags=flags)
@@ -146,16 +187,64 @@ def ensure_server(start_timeout: float = 90.0) -> int:
         if server_alive():
             return LLAMA_PORT
         if proc.poll() is not None:
-            raise RuntimeError("llama-server 进程退出（详见 models/gguf/llama_server.log）")
+            raise RuntimeError("llama-server 进程退出——日志末段：" + _server_log_tail())
         time.sleep(1)
-    raise RuntimeError("llama-server 启动超时")
+    raise RuntimeError("llama-server 启动超时——日志末段：" + _server_log_tail())
 
 
-def stop_server():
+def _port_owner_pids(port: int) -> list[int]:
+    """找到监听该端口的进程 PID（netstat 解析，无第三方依赖）。"""
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return []
+    pids = []
+    for ln in out.splitlines():
+        parts = ln.split()
+        if len(parts) >= 5 and parts[3] == "LISTENING" and parts[1].endswith(f":{port}"):
+            if parts[4].isdigit() and parts[4] not in pids:
+                pids.append(parts[4])
+    return [int(p) for p in pids]
+
+
+def _kill_port_owner(port: int) -> None:
+    """按端口清场：杀掉占用端口的 llama-server（不论父进程是谁）。
+
+    端口被非 llama-server 进程占用时不动手（防御误杀无关服务）。
+    """
+    for pid in _port_owner_pids(port):
+        name = ""
+        try:
+            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                                 capture_output=True, text=True, timeout=10).stdout
+            if '"' in out:
+                name = out.split('"')[1].lower()
+        except Exception:
+            pass
+        if name and "llama-server" not in name and "llama-embedding" not in name:
+            continue
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                       capture_output=True, text=True, timeout=10)
+
+
+def stop_server(kill_port_owner: bool = True):
+    """停掉托管 llama-server 并清空查询缓存。
+
+    terminate() 只对本进程的子进程有效；其它实例/历史遗留的 llama-server 仍会
+    占着端口，之后探活复用会让"切换模型"永不生效——所以切换/重启用按端口清场
+    （kill_port_owner=True）。应用退出钩子传 False，只收自己的子进程，
+    不动其它实例正在共享的服务。
+    """
     if _SERVER["proc"] is not None and _SERVER["proc"].poll() is None:
         _SERVER["proc"].terminate()
     _SERVER["proc"] = None
     _llama_cache.clear()          # 换模型后旧向量必须作废（查询侧进程内缓存）
+    if kill_port_owner:
+        _kill_port_owner(LLAMA_PORT)
+        t0 = time.time()
+        while server_alive(0.5) and time.time() - t0 < 10:
+            time.sleep(0.3)
 
 
 def gguf_arch(path) -> str | None:
@@ -207,6 +296,15 @@ def gguf_arch(path) -> str | None:
 VISUAL_ARCH_MARKERS = ("vl", "vision", "mmproj", "clip")
 
 
+def gguf_is_visual(path) -> bool:
+    """GGUF 是否含视觉塔（架构头判定；头解析失败时按文件名兜底）。"""
+    arch = (gguf_arch(path) or "").lower()
+    if arch:
+        return any(m in arch for m in VISUAL_ARCH_MARKERS)
+    name = Path(path).name.lower()
+    return "vl" in name or "vision" in name
+
+
 def gguf_visual_warning(path) -> str:
     """视觉模型 GGUF 选择提示（llama-server 文本嵌入未支持视觉塔）。"""
     arch = gguf_arch(path) or ""
@@ -217,8 +315,28 @@ def gguf_visual_warning(path) -> str:
     return ""
 
 
+def validate_pairing(file: str, mmproj: str = "") -> None:
+    """主模型 / mmproj 组合校验，不合法抛 ValueError（消息可直接给用户）。
+
+    防两种实测出错的组合：mmproj 投影文件被当主模型启用；
+    纯文本嵌入模型挂视觉投影（0.6B + VL mmproj 必然加载失败）。
+    """
+    if "mmproj" in file.lower():
+        raise ValueError("mmproj 是视觉投影文件，不能作为嵌入主模型——"
+                         "请在列表选择主模型（VL 模型），再在详情面板配对 mmproj")
+    main = GGUF_DIR / file
+    if not main.exists():
+        raise FileNotFoundError(f"文件不存在: {file}")
+    if mmproj:
+        if not (GGUF_DIR / mmproj).exists():
+            raise FileNotFoundError(f"mmproj 文件不存在: {mmproj}")
+        if not gguf_is_visual(main):
+            raise ValueError(f"{file} 是纯文本嵌入模型，不需要配对 mmproj；"
+                             f"视觉投影仅用于 VL 等视觉塔模型（先选 VL 主模型再配对）")
+
+
 import atexit
-atexit.register(stop_server)
+atexit.register(lambda: stop_server(kill_port_owner=False))   # 退出只收自己的子进程，不动共享服务
 
 
 # ---------- HF GGUF 下载（断点续传 + 进度） ----------

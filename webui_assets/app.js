@@ -178,7 +178,8 @@ function renderEmbDetail(f) {
     `<div class="kv-row"><b>${k}</b><span>${escapeHtml(String(v))}</span></div>`).join("");
   const mmRow = $("emb-mmproj-row"), mmHint = $("emb-mmproj-hint");
   const mmFiles = (embedCfg.mmproj_files || []);
-  if (f.is_mmproj) {
+  if (f.is_mmproj || f.is_visual === false) {
+    // mmproj 自身，或纯文本嵌入模型——挂投影必然加载失败（实测事故），不提供配对
     mmRow.style.display = "none"; mmHint.style.display = "none";
   } else if (mmFiles.length) {
     mmRow.style.display = "flex"; mmHint.style.display = "block";
@@ -191,8 +192,13 @@ function renderEmbDetail(f) {
     $("emb-mmproj").innerHTML = `<option value="">（目录中无 mmproj 文件）</option>`;
   }
   const btn = $("btn-emb-activate");
-  btn.disabled = false;
-  btn.textContent = f.file === embedCfg.llama.gguf ? "● 使用中（点击重新加载）" : "启用此模型";
+  if (f.is_mmproj) {
+    btn.disabled = true;
+    btn.textContent = "视觉投影不能单独作为嵌入模型";
+  } else {
+    btn.disabled = false;
+    btn.textContent = f.file === embedCfg.llama.gguf ? "● 使用中（点击重新加载）" : "启用此模型";
+  }
   btn.onclick = async () => {
     try {
       const mm = $("emb-mmproj").value || "";

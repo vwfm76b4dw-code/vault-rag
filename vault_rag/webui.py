@@ -486,20 +486,20 @@ class GgufSelectReq(BaseModel):
 @app.post("/api/embed/gguf/select")
 def api_embed_gguf_select(req: GgufSelectReq):
     from vault_rag import embed_providers
+    try:
+        embed_providers.validate_pairing(req.file, req.mmproj)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     gguf_path = embed_providers.GGUF_DIR / req.file
-    if not gguf_path.exists():
-        raise HTTPException(404, f"文件不存在: {req.file}")
-    patch = {"llama_gguf": req.file}
-    if req.mmproj:
-        mm = embed_providers.GGUF_DIR / req.mmproj
-        if not mm.exists():
-            raise HTTPException(404, f"mmproj 文件不存在: {req.mmproj}")
-        patch["llama_mmproj"] = req.mmproj
-    else:
-        patch["llama_mmproj"] = None        # 显式清除配对
+    # validate_pairing 已保证：mmproj 只在视觉主模型时非空
+    patch = {"llama_gguf": req.file,
+             "llama_mmproj": req.mmproj if req.mmproj else None}   # None=显式清除配对
     lib.save_local_settings(patch)
     # 关键：终止按旧模型启动的托管 llama-server——否则 server_alive() 一直复用
-    # 旧进程，"切换模型"永不生效（下次检索时按新模型自动重启）
+    # 旧进程，"切换模型"永不生效（下次检索时按新模型自动重启）。
+    # kill_port_owner=True：连别的实例/历史遗留起的孤儿进程一并按端口清场（实测事故）
     embed_providers.stop_server()
     warning = embed_providers.gguf_visual_warning(gguf_path)
     if "视觉塔" in (warning or ""):
