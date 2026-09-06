@@ -431,6 +431,8 @@ def api_embed_config():
         "endpoint_alive": embed_endpoint_alive(),
         "llama": embed_providers.llama_available(),
         "ggufs": embed_providers.list_ggufs(),
+        "mmproj": lib.load_local_settings().get("llama_mmproj", ""),
+        "mmproj_files": [g["file"] for g in embed_providers.list_ggufs() if g.get("is_mmproj")],
         "hf_presets": embed_providers.HF_PRESETS,
         "dl": embed_providers.dl_status(),
     }
@@ -477,6 +479,7 @@ def api_embed_config_save(req: EmbedConfigReq):
 
 class GgufSelectReq(BaseModel):
     file: str
+    mmproj: str = ""
 
 
 @app.post("/api/embed/gguf/select")
@@ -485,11 +488,40 @@ def api_embed_gguf_select(req: GgufSelectReq):
     gguf_path = embed_providers.GGUF_DIR / req.file
     if not gguf_path.exists():
         raise HTTPException(404, f"文件不存在: {req.file}")
-    lib.save_local_settings({"llama_gguf": req.file})
+    patch = {"llama_gguf": req.file}
+    if req.mmproj:
+        mm = embed_providers.GGUF_DIR / req.mmproj
+        if not mm.exists():
+            raise HTTPException(404, f"mmproj 文件不存在: {req.mmproj}")
+        patch["llama_mmproj"] = req.mmproj
+    else:
+        patch["llama_mmproj"] = None        # 显式清除配对
+    lib.save_local_settings(patch)
     # 关键：终止按旧模型启动的托管 llama-server——否则 server_alive() 一直复用
     # 旧进程，"切换模型"永不生效（下次检索时按新模型自动重启）
     embed_providers.stop_server()
     warning = embed_providers.gguf_visual_warning(gguf_path)
+    if "视觉塔" in (warning or ""):
+        if patch.get("llama_mmproj"):
+            warning = (f"视觉模型已配对 mmproj（{patch['llama_mmproj']}），服务将以 "
+                       f"--pooling last 启动——已实测 VL GGUF 经此路径输出 2048 维向量。")
+        else:
+            warning = ("视觉 GGUF 建议配对 mmproj（右侧详情面板选择）后启用；"
+                       "未配对时仅文本嵌入，且需服务端 --pooling last（已自动附加）。")
+    # 维度提示：换嵌入模型后，既有索引向量与新模型维度/空间不匹配
+    dim_map = {"vl-embedding-2b": 2048, "embedding-0.6b": 1024}
+    def _dim(name):
+        low = (name or "").lower()
+        for k, v in dim_map.items():
+            if k in low: return v
+        return None
+    old_d, new_d = _dim(lib.load_local_settings().get("llama_gguf_prev") or ""), _dim(req.file)
+    lib.save_local_settings({"llama_gguf_prev": req.file})
+    dim_note = ""
+    if old_d and new_d and old_d != new_d:
+        dim_note = (f"注意：新旧模型向量维度不同（{old_d} → {new_d}），"
+                    f"语义检索需全量重建索引后才能使用新模型；关键词检索不受影响。")
+    warning = "；".join(x for x in (warning, dim_note) if x)
     return {"ok": True, "active": req.file,
             "restarted": True,
             "warning": warning,

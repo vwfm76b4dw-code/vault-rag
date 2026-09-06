@@ -114,7 +114,7 @@ async function renderEmbed() {
   $("llama-info").innerHTML =
     `<div class="row"><span class="muted">服务端</span><span style="font-size:11px">${escapeHtml(L.exe || "未找到（放入 dist/llama/ 或设 RAG_LLAMA_EXE）")}</span></div>` +
     `<div class="row"><span class="muted">模型</span><span style="font-size:11px">${escapeHtml(L.gguf || "未下载")}</span></div>`;
-  // GGUF 列表
+  // GGUF 列表（点击 → 右侧详情面板）
   knownGgufs = (embedCfg.ggufs || []).map((f) => f.file);
   const g = $("gguf-list");
   g.innerHTML = "";
@@ -123,20 +123,60 @@ async function renderEmbed() {
     const row = document.createElement("div");
     row.className = "provider" + (active ? " active" : "");
     row.innerHTML =
-      `<div class="p-body"><div class="p-name">${escapeHtml(f.file)}</div></div>` +
+      `<div class="p-body"><div class="p-name">${escapeHtml(f.file)}</div>` +
+      `<div class="p-sub">${quantOf(f.file)}${f.is_mmproj ? " · 视觉投影" : ""}</div></div>` +
       `<span class="p-tag muted">${f.size_mb} MB</span>` +
       (active ? `<span class="p-tag">● 使用中</span>` : ``);
-    row.addEventListener("click", async () => {
-      try {
-        const r = await post("/api/embed/gguf/select", { file: f.file });
-        if (r.warning) alert(r.warning);
-        else alert(`✓ 已切换为 ${f.file}\n嵌入服务已重启，下次检索按新模型生效`);
-      } catch (e) { alert("切换失败: " + e.message); }
-      renderEmbed();
+    row.addEventListener("click", () => {
+      g.querySelectorAll(".provider").forEach((x) => x.classList.remove("sel"));
+      row.classList.add("sel");
+      renderEmbDetail(f);
     });
     g.appendChild(row);
+    if (active) { row.classList.add("sel"); renderEmbDetail(f); }
   });
   renderDl();
+}
+
+function renderEmbDetail(f) {
+  $("emb-det-title").textContent = f.file;
+  const rows = [
+    ["文件", f.file], ["量化", quantOf(f.file)], ["大小", f.size_mb + " MB"],
+    ["架构", f.arch || "?"],
+    ["用途", f.is_mmproj ? "视觉投影（配对视觉模型）" : "嵌入模型"],
+  ];
+  $("emb-det-info").innerHTML = rows.map(([k, v]) =>
+    `<div class="kv-row"><b>${k}</b><span>${escapeHtml(String(v))}</span></div>`).join("");
+  const mmRow = $("emb-mmproj-row"), mmHint = $("emb-mmproj-hint");
+  const mmFiles = (embedCfg.mmproj_files || []);
+  if (f.is_mmproj) {
+    mmRow.style.display = "none"; mmHint.style.display = "none";
+  } else if (mmFiles.length) {
+    mmRow.style.display = "flex"; mmHint.style.display = "block";
+    const sel = $("emb-mmproj");
+    const cur = embedCfg.mmproj || "";
+    sel.innerHTML = `<option value="">（不挂载）</option>` +
+      mmFiles.map((m) => `<option value="${escapeHtml(m)}" ${m === cur ? "selected" : ""}>${escapeHtml(m)}</option>`).join("");
+  } else {
+    mmRow.style.display = "flex"; mmHint.style.display = "block";
+    $("emb-mmproj").innerHTML = `<option value="">（目录中无 mmproj 文件）</option>`;
+  }
+  const btn = $("btn-emb-activate");
+  btn.disabled = false;
+  btn.textContent = f.file === embedCfg.llama.gguf ? "● 使用中（点击重新加载）" : "启用此模型";
+  btn.onclick = async () => {
+    try {
+      const mm = $("emb-mmproj").value || "";
+      const r = await post("/api/embed/gguf/select", { file: f.file, mmproj: mm });
+      $("emb-det-msg").className = "msg ok";
+      $("emb-det-msg").textContent = "✓ 已启用（嵌入服务重启，下次检索生效）";
+      if (r.warning) $("emb-det-msg").textContent = "⚠ " + r.warning;
+      renderEmbed();
+    } catch (e) {
+      $("emb-det-msg").className = "msg err";
+      $("emb-det-msg").textContent = "✗ " + e.message;
+    }
+  };
 }
 
 let dlPolling = false;

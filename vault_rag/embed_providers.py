@@ -54,7 +54,8 @@ def list_ggufs() -> list[dict]:
     GGUF_DIR.mkdir(parents=True, exist_ok=True)
     out = []
     for p in sorted(GGUF_DIR.glob("*.gguf"), key=lambda x: -x.stat().st_mtime):
-        out.append({"file": p.name, "size_mb": round(p.stat().st_size / 1e6)})
+        out.append({"file": p.name, "is_mmproj": "mmproj" in p.name.lower(),
+                    "arch": gguf_arch(p), "size_mb": round(p.stat().st_size / 1e6)})
     return out
 
 
@@ -131,10 +132,14 @@ def ensure_server(start_timeout: float = 90.0) -> int:
     GGUF_DIR.mkdir(parents=True, exist_ok=True)
     log = open(GGUF_DIR / "llama_server.log", "a", encoding="utf-8")
     flags = SUBPROCESS_FLAGS
+    cmd = [str(exe), "-m", str(gguf), "--embedding", "--pooling", "last",
+           "--host", "127.0.0.1", "--port", str(LLAMA_PORT)]
+    # --pooling last：部分 GGUF（如 VL 系）元数据未声明 pooling，/v1/embeddings 会 400
+    mmproj = load_local_settings().get("llama_mmproj")
+    if mmproj and (GGUF_DIR / mmproj).exists():
+        cmd += ["--mmproj", str(GGUF_DIR / mmproj)]   # 视觉投影（用户配置）
     proc = subprocess.Popen(
-        [str(exe), "-m", str(gguf), "--embedding", "--host", "127.0.0.1",
-         "--port", str(LLAMA_PORT)],
-        stdout=log, stderr=log, creationflags=flags)
+        cmd, stdout=log, stderr=log, creationflags=flags)
     _SERVER["proc"] = proc
     t0 = time.time()
     while time.time() - t0 < start_timeout:

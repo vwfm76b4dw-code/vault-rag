@@ -34,27 +34,27 @@
         <circle cx="32" cy="31.5" r="4.2" fill="url(#lg)"/>
         <circle cx="32" cy="31.5" r="6.5" fill="none" stroke="#33ff33" opacity=".5"/>
       </svg></span>
-      <span class="title">vault-rag</span>
+      <span class="title nl">vault-rag</span>
     </div>
 
     <nav class="side-nav">
-      <div class="nav-cap">工作台</div>
-      <button class="nav-item active" data-nav="chat">✦ 问答（检索）</button>
-      <button class="nav-item" data-nav="board">▦ 看板</button>
+      <div class="nav-cap" title="工作台"></div>
+      <button class="nav-item active" data-nav="chat" title="问答（检索）"><span class="ni">✦</span><span class="nl">问答（检索）</span></button>
+      <button class="nav-item" data-nav="board" title="看板"><span class="ni">▦</span><span class="nl">看板</span></button>
 
-      <div class="nav-cap">操作管理</div>
-      <button class="nav-item" data-nav="ops">⟳ 索引 · 范围 · 上传</button>
+      <div class="nav-cap" title="操作管理"></div>
+      <button class="nav-item" data-nav="ops" title="上传"><span class="ni">⟳ 索引 · 范围 ·</span><span class="nl">上传</span></button>
 
-      <div class="nav-cap">知识库</div>
-      <button class="nav-item" data-nav="repos">▤ 仓库管理（多 RAG）</button>
+      <div class="nav-cap" title="知识库"></div>
+      <button class="nav-item" data-nav="repos" title="RAG）"><span class="ni">▤ 仓库管理（多</span><span class="nl">RAG）</span></button>
 
-      <div class="nav-cap">模型</div>
-      <button class="nav-item" data-nav="models-gen">✧ 生成供应商</button>
-      <button class="nav-item" data-nav="models-emb">◈ 检索 Embedding</button>
+      <div class="nav-cap" title="模型"></div>
+      <button class="nav-item" data-nav="models-gen" title="生成供应商"><span class="ni">✧</span><span class="nl">生成供应商</span></button>
+      <button class="nav-item" data-nav="models-emb" title="Embedding"><span class="ni">◈ 检索</span><span class="nl">Embedding</span></button>
 
-      <div class="nav-cap">系统</div>
-      <button class="nav-item" data-nav="mcp">🔌 MCP &amp; 状态</button>
-      <button class="nav-item" data-nav="settings">⚙ 高级设置</button>
+      <div class="nav-cap" title="系统"></div>
+      <button class="nav-item" data-nav="mcp" title="状态"><span class="ni">🔌 MCP &amp;</span><span class="nl">状态</span></button>
+      <button class="nav-item" data-nav="settings" title="高级设置"><span class="ni">⚙</span><span class="nl">高级设置</span></button>
     </nav>
 
     <div class="side-foot">
@@ -294,26 +294,14 @@
           <div id="embed-status" class="kv"></div>
         </div>
 
-        <div class="two-col">
-          <div class="board-card glass">
-            <h3>HTTP 端点档案</h3>
-            <div id="embed-profile-list" class="provider-list"></div>
-            <h3 class="mt">＋ 新增 / 修改端点</h3>
-            <div class="row"><input id="ep-name" placeholder="名称（如 LM Studio）"></div>
-            <div class="row"><input id="ep-url" placeholder="URL（…/v1/embeddings）"></div>
-            <div class="row"><input id="ep-model" placeholder="模型名"></div>
-            <div class="row"><input id="ep-key" type="password" placeholder="key（云端 embedding 用；本地留空）"></div>
-            <div class="row"><button id="btn-ep-save" class="primary">保存端点并启用</button></div>
-            <div class="row" id="ep-quick"></div>
-          </div>
-
+        <div class="emb-grid">
           <div class="board-card glass">
             <h3>内置 llama.cpp <span id="llama-state" class="muted small"></span></h3>
             <div id="llama-info" class="kv"></div>
-            <h3 class="mt">已下载模型 <span class="muted small">（点击选用）</span></h3>
+            <h3 class="mt">已下载模型 <span class="muted small">（点击查看详情）</span></h3>
             <div id="gguf-list" class="provider-list"></div>
 
-            <h3 class="mt sub-h">下载新模型 <span class="muted small">（LM Studio 式：关键词或仓库 id；hf-mirror 可选）</span></h3>
+            <h3 class="mt sub-h">下载新模型 <span class="muted small">（关键词或仓库 id；hf-mirror 可选）</span></h3>
             <div class="row">
               <input id="hf-kw" placeholder="搜索模型：关键词（qwen3 embedding）或仓库 id">
               <button id="btn-hf-search" class="primary">🔍 搜索模型</button>
@@ -327,6 +315,29 @@
             </div>
             <div id="hf-files" class="provider-list empty">搜索模型，或直接输入仓库 id 后点「浏览文件」</div>
             <div id="dl-queue" class="muted small" style="margin-top:8px"></div>
+          </div>
+
+          <div class="board-card glass" id="emb-detail">
+            <h3 id="emb-det-title">模型详情</h3>
+            <div id="emb-det-info" class="kv"><span class="empty">点击左侧模型查看详情</span></div>
+            <div class="row" id="emb-mmproj-row" style="display:none">
+              <span class="lbl-fixed">mmproj</span>
+              <select id="emb-mmproj" class="sel" style="max-width:170px"></select>
+            </div>
+            <p class="muted small" id="emb-mmproj-hint" style="display:none">视觉投影文件（llama.cpp 视觉支持需配对；文本嵌入不受影响）</p>
+            <div class="row"><button id="btn-emb-activate" class="primary" disabled>启用此模型</button>
+              <span id="emb-det-msg" class="msg"></span></div>
+            <hr class="sep">
+            <h3>HTTP 端点档案</h3>
+            <div id="embed-profile-list" class="provider-list"></div>
+            <details class="mt"><summary class="muted small">＋ 新增 / 修改端点</summary>
+              <div class="row"><input id="ep-name" placeholder="名称（如 LM Studio）"></div>
+              <div class="row"><input id="ep-url" placeholder="URL（…/v1/embeddings）"></div>
+              <div class="row"><input id="ep-model" placeholder="模型名"></div>
+              <div class="row"><input id="ep-key" type="password" placeholder="key（云端 embedding 用；本地留空）"></div>
+              <div class="row"><button id="btn-ep-save" class="primary">保存端点并启用</button></div>
+              <div class="row" id="ep-quick"></div>
+            </details>
           </div>
         </div>
       </section>

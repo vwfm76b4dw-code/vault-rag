@@ -53,9 +53,10 @@ body {
 /* ---------- 布局：侧栏 + 内容 ---------- */
 .app { display: flex; height: 100vh; position: relative; z-index: 2; }
 .sidebar {
-  width: var(--sidebar-w); flex-shrink: 0;
-  background: #0a0b0a; border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; padding: 14px 10px 10px;
+  width: 58px; min-width: 58px;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 10px 6px; gap: 2px;
+  border-right: 1px solid var(--line); background: #0a0b0a;
 }
 .brand { display: flex; align-items: center; gap: 9px; padding: 2px 8px 12px; }
 .logo svg { filter: drop-shadow(0 0 6px rgba(51,255,51,.35)); }
@@ -348,3 +349,23 @@ button, .chip, .p-tag, .dot, .status-pill, .brand, .nav-item, .nav-cap { user-se
 .pbar { flex: 1; height: 6px; background: rgba(255,255,255,.07); border-radius: 4px;
   overflow: hidden; }
 .pbar > div { height: 100%; width: 0; background: var(--green); transition: width .4s; }
+
+/* ---- 细图标侧边栏（LM Studio 式）---- */
+.sidebar .brand { display: flex; justify-content: center; padding: 2px 0 6px; }
+.sidebar .title.nl { display: none; }
+.sidebar .nav-cap {
+  width: 26px; height: 1px; margin: 8px 0; background: var(--line2);
+  font-size: 0; overflow: hidden;
+}
+.sidebar .nav-item { width: 44px; padding: 9px 0; justify-content: center; font-size: 17px; }
+.sidebar .nav-item .nl { display: none; }
+.sidebar .nav-item.active::before { left: -6px; }
+.nav-item .ni { display: inline-block; width: 22px; text-align: center; }
+
+/* ---- 检索 Embedding：左列表/右详情 ---- */
+.emb-grid { display: grid; grid-template-columns: 1fr 330px; gap: 13px; align-items: start; }
+@media (max-width: 1100px) { .emb-grid { grid-template-columns: 1fr; } }
+#emb-detail { position: sticky; top: 12px; }
+#emb-det-info .kv-row { display: flex; justify-content: space-between; gap: 8px;
+  font-size: 12.5px; padding: 3px 0; border-bottom: 1px dashed var(--line); }
+#emb-det-info .kv-row b { color: var(--muted); font-weight: 600; }
