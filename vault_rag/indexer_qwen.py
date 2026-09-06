@@ -63,15 +63,21 @@ def last_token_pool(last_hidden: torch.Tensor, attention_mask: torch.Tensor) -> 
 
 
 def embed_batch(texts: list[str]) -> np.ndarray:
+    import time as _t
     import torch
     model, tokenizer = load_model()
+    t0 = _t.time()
     with torch.no_grad():
         inputs = tokenizer(texts, return_tensors="pt", padding=True,
                            truncation=True, max_length=MAX_LEN)
         outputs = model(**inputs)
         emb = last_token_pool(outputs.last_hidden_state, inputs["attention_mask"])
         emb = torch.nn.functional.normalize(emb, p=2, dim=1)   # L2 归一化，检索必需
-        return emb.numpy().astype(np.float32)
+        out = emb.numpy().astype(np.float32)
+    # 批次级进度：巨量文本块（如百万字符文件）在 CPU 上要算很久，
+    # 静默会被误判为卡死（2026-09-05 事故）。每批打印一行可观测。
+    print(f"[embed] 批 {len(texts)} 块 · {_t.time() - t0:.1f}s", flush=True)
+    return out
 
 
 def init_db(con: sqlite3.Connection):
@@ -238,6 +244,13 @@ def index(max_files: int = 0):
     try:
         for rel, p, mt in todo:
             try:
+                # 二进制防线（2026-09-05 事故）：图片等二进制经 errors="replace"
+                # 会变成数万块乱码文本入库污染索引+吃满 CPU——读首 4KB 抽样判定
+                head = p.open("rb").read(4096)
+                if b"\x00" in head or head[:5] in (b"%PDF-", b"PK\x03\x04", b"\x89PNG",
+                                                   b"\xff\xd8\xff", b"GIF8"):
+                    print(f"! 跳过二进制文件 {rel}（图片/PDF/压缩包不进文本索引）", flush=True)
+                    continue
                 raw = p.read_text(encoding="utf-8", errors="replace")
                 pieces = chunk_note(rel, raw)
             except Exception as e:
