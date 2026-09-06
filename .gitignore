@@ -41,3 +41,5 @@ dist/
 llama/
 data/gguf/
 /_global_settings.json
+out/
+docs/_cc_prompt_*.txt

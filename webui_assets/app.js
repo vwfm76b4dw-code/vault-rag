@@ -2,28 +2,6 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 
-/* ================= 跟随光效 ================= */
-(() => {
-  const glow = $("cursor-glow");
-  let tx = innerWidth / 2, ty = innerHeight * .3, x = tx, y = ty;
-  addEventListener("mousemove", (e) => { tx = e.clientX; ty = e.clientY; }, { passive: true });
-  (function loop() {
-    x += (tx - x) * 0.12; y += (ty - y) * 0.12;        // 缓动跟随（快而不僵）
-    glow.style.transform = `translate(${x}px, ${y}px)`;
-    requestAnimationFrame(loop);
-  })();
-  // 玻璃卡片聚光边框：把鼠标位置写入卡片局部坐标
-  addEventListener("mousemove", (e) => {
-    for (const c of document.querySelectorAll(".glass")) {
-      const r = c.getBoundingClientRect();
-      if (e.clientX > r.left - 60 && e.clientX < r.right + 60 &&
-          e.clientY > r.top - 60 && e.clientY < r.bottom + 60) {
-        c.style.setProperty("--gx", (e.clientX - r.left) + "px");
-        c.style.setProperty("--gy", (e.clientY - r.top) + "px");
-      }
-    }
-  }, { passive: true });
-})();
 
 /* ================= 模型管理面板（cc-switch 式：生成 / 检索两页签） ================= */
 document.querySelectorAll(".mtab").forEach((t) => t.addEventListener("click", () => {
