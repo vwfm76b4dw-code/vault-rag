@@ -33,50 +33,79 @@ document.querySelectorAll(".mtab").forEach((t) => t.addEventListener("click", ()
   $("mtab-" + t.dataset.mtab).classList.add("active");
 }));
 
-/* ---- 生成供应商：档案列表（预设+自定义，点击切换，可增删改） ---- */
+/* ---- 生成供应商：左列表（点击选中）/ 右详情（切换·Key·删除在详情面板） ---- */
+let selProvider = null;   // 当前选中的档案名；null = 跟随使用中的档案
 async function renderProviders() {
   const d = await api("/api/providers");
+  $("provider-count").textContent = `（${d.profiles.length} 个档案）`;
   const box = $("provider-list");
   box.innerHTML = "";
+  const sel = d.profiles.find((p) => p.name === selProvider) ||
+              d.profiles.find((p) => p.name === d.active.name);
   d.profiles.forEach((p) => {
     const active = p.name === d.active.name;
     const row = document.createElement("div");
-    row.className = "provider" + (active ? " active" : "");
+    row.className = "provider" + (active ? " active" : "") +
+                    (sel && sel.name === p.name ? " sel" : "");
     row.innerHTML =
       `<div class="p-body"><div class="p-name">${escapeHtml(p.name)}</div>` +
       `<div class="p-sub">${escapeHtml(p.url)} · ${escapeHtml(p.model)}</div></div>` +
       (p.key ? `<span class="p-tag muted" title="档案自带 key">🔑</span>` : ``) +
-      `<span class="p-tag linklike" data-p-key title="设置/更改该档案专用 key">Key</span>` +
-      (active ? `<span class="p-tag">● 使用中</span>`
-              : `<span class="p-tag muted">切换</span>`) +
-      (p.custom ? `<button class="p-del" title="删除该档案">✕</button>` : ``);
-    row.querySelector("[data-p-key]").addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const k = prompt(`为「${p.name}」设置专用 Key（当前${p.key ? "已配置" : "未配置"}；留空取消）：`);
-      if (!k) return;
-      try {
-        await post("/api/providers", { name: p.name, key: k });
-        setMsgAuto("np-msg", `✓ Key 已保存并生效（${p.name}）`, true);
-        renderProviders(); refreshStatus();
-      } catch (err) { alert(err.message); }
-    });
-    row.addEventListener("click", async (e) => {
-      if (e.target.classList.contains("p-del")) return;
-      try { await post("/api/providers", { name: p.name }); renderProviders(); refreshStatus(); }
-      catch (err) { alert(err.message); }
-    });
-    const del = row.querySelector(".p-del");
-    if (del) del.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      if (!confirm(`删除档案「${p.name}」？`)) return;
-      try {
-        await api("/api/providers", { method: "DELETE",
-          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: p.name }) });
-        renderProviders(); refreshStatus();
-      } catch (err) { alert(err.message); }
+      (active ? `<span class="p-tag">● 使用中</span>` : ``);
+    row.addEventListener("click", () => {
+      selProvider = p.name;
+      box.querySelectorAll(".provider").forEach((x) => x.classList.remove("sel"));
+      row.classList.add("sel");
+      renderGenDetail(p, d.active.name);
     });
     box.appendChild(row);
   });
+  if (sel) renderGenDetail(sel, d.active.name);
+}
+
+function renderGenDetail(p, activeName) {
+  $("gen-det-title").textContent = p.name;
+  const rows = [
+    ["名称", p.name],
+    ["端点", p.url],
+    ["模型", p.model],
+    ["Key", p.key ? "档案专用 ✓" : "未配置（生成时回落全局 Key）"],
+    ["类型", p.custom ? "自定义档案（可删改）" : "预设档案"],
+    ["状态", p.name === activeName ? "● 当前使用中" : "备用"],
+  ];
+  $("gen-det-info").innerHTML = rows.map(([k, v]) =>
+    `<div class="kv-row"><b>${k}</b><span>${escapeHtml(String(v))}</span></div>`).join("");
+  $("gen-det-actions").style.display = "flex";
+  const act = $("btn-gen-activate");
+  const isActive = p.name === activeName;
+  act.disabled = isActive;
+  act.textContent = isActive ? "● 使用中" : "启用并切换";
+  $("btn-gen-del").style.display = p.custom ? "inline-block" : "none";
+  act.onclick = async () => {
+    try {
+      await post("/api/providers", { name: p.name });
+      selProvider = p.name;
+      renderProviders(); refreshStatus();
+    } catch (e) { setMsg("gen-det-msg", e.message, false); }
+  };
+  $("btn-gen-key").onclick = async () => {
+    const k = prompt(`为「${p.name}」设置专用 Key（当前${p.key ? "已配置" : "未配置"}；留空取消）：`);
+    if (!k) return;
+    try {
+      await post("/api/providers", { name: p.name, key: k });
+      setMsgAuto("gen-det-msg", `✓ Key 已保存并生效（${p.name}）`, true);
+      renderProviders(); refreshStatus();
+    } catch (e) { setMsg("gen-det-msg", e.message, false); }
+  };
+  $("btn-gen-del").onclick = async () => {
+    if (!confirm(`删除档案「${p.name}」？`)) return;
+    try {
+      await api("/api/providers", { method: "DELETE",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: p.name }) });
+      selProvider = null;
+      renderProviders(); refreshStatus();
+    } catch (e) { setMsg("gen-det-msg", e.message, false); }
+  };
 }
 
 /* ---- 检索 Embedding 页签 ---- */

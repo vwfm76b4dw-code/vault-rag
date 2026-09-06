@@ -55,13 +55,13 @@ body {
 .sidebar {
   width: 58px; min-width: 58px;
   display: flex; flex-direction: column; align-items: center;
-  padding: 10px 6px; gap: 2px;
+  padding: 8px 6px; gap: 8px;
   border-right: 1px solid var(--line); background: #0a0b0a;
 }
 .brand { display: flex; align-items: center; gap: 9px; padding: 2px 8px 12px; }
 .logo svg { filter: drop-shadow(0 0 6px rgba(51,255,51,.35)); }
 .title { font-weight: 650; font-size: 14.5px; }
-.side-nav { flex: 1; overflow-y: auto; }
+.side-nav { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; }
 .nav-cap {
   font-size: 10.5px; color: var(--muted); letter-spacing: 1.5px;
   padding: 12px 10px 4px; text-transform: uppercase; opacity: .8;
@@ -79,7 +79,7 @@ body {
   width: 2px; background: var(--green); border-radius: 2px; }
 .side-foot {
   display: flex; align-items: center; gap: 7px;
-  border-top: 1px solid var(--line); padding: 10px 8px 2px;
+  border-top: 1px solid var(--line); padding: 8px 0 0;
   font: 10.5px var(--mono); color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -350,22 +350,32 @@ button, .chip, .p-tag, .dot, .status-pill, .brand, .nav-item, .nav-cap { user-se
   overflow: hidden; }
 .pbar > div { height: 100%; width: 0; background: var(--green); transition: width .4s; }
 
-/* ---- 细图标侧边栏（LM Studio 式）---- */
-.sidebar .brand { display: flex; justify-content: center; padding: 2px 0 6px; }
+/* ---- 细图标侧边栏（LM Studio 式 · 8pt 网格）---- */
+.sidebar .brand { display: flex; justify-content: center; padding: 0; }
 .sidebar .title.nl { display: none; }
+/* 分隔线必须显式清 padding：旧 .nav-cap 的 padding 在 border-box 下会把 height:1px 撑成 16px 灰块 */
 .sidebar .nav-cap {
-  width: 26px; height: 1px; margin: 8px 0; background: var(--line2);
-  font-size: 0; overflow: hidden;
+  width: 26px; height: 1px; flex-shrink: 0; padding: 0; margin: 6px 0;
+  background: var(--line2); font-size: 0; overflow: hidden;
 }
-.sidebar .nav-item { width: 44px; padding: 9px 0; justify-content: center; font-size: 17px; }
+.sidebar .nav-item {
+  width: 44px; height: 40px; flex-shrink: 0; padding: 0; margin: 2px 0;
+  display: flex; align-items: center; justify-content: center;
+}
 .sidebar .nav-item .nl { display: none; }
 .sidebar .nav-item.active::before { left: -6px; }
 .nav-item .ni { display: inline-block; width: 22px; text-align: center; }
 
-/* ---- 检索 Embedding：左列表/右详情 ---- */
+/* ---- 检索 Embedding / 生成供应商：左列表/右详情 ---- */
 .emb-grid { display: grid; grid-template-columns: 1fr 330px; gap: 13px; align-items: start; }
-@media (max-width: 1100px) { .emb-grid { grid-template-columns: 1fr; } }
-#emb-detail { position: sticky; top: 12px; }
-#emb-det-info .kv-row { display: flex; justify-content: space-between; gap: 8px;
+/* sticky 必须写在媒体查询之前：同特异性下源序靠后的规则会覆盖窄窗口的 static */
+#emb-detail, #gen-detail { position: sticky; top: 12px; }
+@media (max-width: 1100px) {
+  .emb-grid { grid-template-columns: 1fr; }
+  /* 折叠成单列后 sticky 详情会钉在视口顶部盖住后续内容，取消吸附 */
+  #emb-detail, #gen-detail { position: static; }
+}
+#emb-det-info .kv-row, #gen-det-info .kv-row { display: flex; justify-content: space-between; gap: 8px;
   font-size: 12.5px; padding: 3px 0; border-bottom: 1px dashed var(--line); }
-#emb-det-info .kv-row b { color: var(--muted); font-weight: 600; }
+#emb-det-info .kv-row b, #gen-det-info .kv-row b { color: var(--muted); font-weight: 600; }
+.provider.sel { border-color: var(--green-line); }

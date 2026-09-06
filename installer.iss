@@ -1,8 +1,8 @@
 ; vault-rag 安装包脚本 — Inno Setup 6
-; 构建: ISCC.exe installer.iss  →  dist/vault-rag-v1.2.2-setup.exe
+; 构建: ISCC.exe installer.iss  →  dist/vault-rag-v1.2.3-setup.exe
 
 #define MyAppName "vault-rag"
-#define MyAppVersion "1.2.2"
+#define MyAppVersion "1.2.3"
 #define MyAppPublisher "vault-rag"
 #define MyAppExeName "vault-rag.exe"
 
